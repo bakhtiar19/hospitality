@@ -1,6 +1,6 @@
 [build]
   base = "."
-  command = "pnpm --filter @hospitality/web build"
+  command = "pnpm --filter @hospitality/shared-types build && pnpm --filter @hospitality/web build"
   publish = "apps/web/.next"
 
 [build.environment]
