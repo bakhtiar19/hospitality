@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import Link from 'next/link';
 import {
   Share2,
   RefreshCw,
@@ -19,9 +20,11 @@ import {
   ExternalLink,
   HelpCircle,
   X,
+  ArrowRight,
 } from 'lucide-react';
 import { useI18n } from '../../../providers/intl-provider';
 import { formatCurrency } from '../../../lib/utils';
+import { getStoredBookings, saveStoredBookings, TapeChartBooking } from '../../../lib/bookings-store';
 
 interface SyncLogItem {
   id: string;
@@ -155,6 +158,31 @@ export default function ChannelManagerPage() {
 
     setTimeout(() => {
       const mockId = `AGD-${Math.floor(10000 + Math.random() * 90000)}`;
+      
+      // Store in shared local storage so it immediately reflects in Tape Chart & Front Office
+      const newBooking: TapeChartBooking = {
+        id: `bk-${Date.now()}`,
+        bookingNumber: mockId,
+        source: 'AGODA',
+        guestName: 'Bambang Setyawan',
+        phone: '+628198765432',
+        roomNumber: '202',
+        roomType: 'Deluxe King',
+        ratePlan: 'Bed & Breakfast',
+        checkInDate: '2026-11-24', // Arrival Today!
+        checkOutDate: '2026-11-27',
+        status: 'CONFIRMED',
+        totalAmount: 1760000,
+        balance: 1760000,
+      };
+
+      try {
+        const current = getStoredBookings();
+        saveStoredBookings([newBooking, ...current]);
+      } catch (err) {
+        console.error(err);
+      }
+
       const newLog: SyncLogItem = {
         id: `log-${Date.now()}`,
         channel: 'AGODA',
@@ -167,18 +195,18 @@ export default function ChannelManagerPage() {
         responsePayload: {
           status: 'Success',
           importedBookingNumber: `BK-${mockId}`,
-          guest: 'Budi Santoso',
+          guest: 'Bambang Setyawan',
           channelReservationId: mockId,
           totalAmount: 1760000,
-          roomType: 'Deluxe King',
-          importStatus: 'IMPORTED_UNASSIGNED',
+          roomType: 'Deluxe King (Kamar 202)',
+          importStatus: 'IMPORTED_CONFIRMED',
         },
       };
 
       setLogs((prev) => [newLog, ...prev]);
       setIsPushing(false);
-      setPushStatusMessage(`Inbound Agoda booking ${mockId} imported! Inventory decremented.`);
-      setTimeout(() => setPushStatusMessage(null), 4000);
+      setPushStatusMessage(`Inbound Agoda booking ${mockId} (Bambang Setyawan) berhasil diimpor! Otomatis masuk ke Tape Chart & Front Office.`);
+      setTimeout(() => setPushStatusMessage(null), 8000);
     }, 700);
   };
 
@@ -565,62 +593,104 @@ export default function ChannelManagerPage() {
       {/* TAB D: Agoda Sandbox Simulator */}
       {activeTab === 'simulator' && (
         <div className="bg-card border border-border rounded-xl shadow-xs p-6 space-y-6">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="font-bold text-base text-foreground flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-rose-500" />
-                Agoda Extranet Sandbox Simulator
+                Simulator Ekstranet Agoda (Sandbox)
               </h3>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Simulate inbound reservations and fault-injection scenarios without real Agoda credentials
+                Uji coba simulasi reservasi masuk dari Agoda dan skenario error tanpa perlu akun Agoda riil
               </p>
             </div>
-            <span className="text-xs font-mono bg-rose-500/10 text-rose-600 px-2.5 py-1 rounded-full font-bold border border-rose-500/20">
-              Mock Server: localhost:4001
+            <span className="text-xs font-mono bg-rose-500/10 text-rose-600 px-2.5 py-1 rounded-full font-bold border border-rose-500/20 self-start sm:self-auto">
+              Status: Live Mock Agoda Ready
             </span>
+          </div>
+
+          {/* Panduan Cara Pakai */}
+          <div className="p-4 bg-primary/5 border border-primary/20 rounded-xl space-y-2">
+            <h4 className="text-xs font-bold text-primary flex items-center gap-2">
+              <HelpCircle className="w-4 h-4" />
+              Cara Menggunakan Simulator:
+            </h4>
+            <ol className="text-xs text-muted-foreground list-decimal list-inside space-y-1 leading-relaxed">
+              <li>Tekan tombol merah <strong>"Trigger Inbound Agoda Booking"</strong> di bawah.</li>
+              <li>Sistem akan menyimulasikan transaksi seolah ada tamu (Bambang Setyawan) baru saja booking kamar Deluxe lewat aplikasi Agoda.</li>
+              <li>Reservasi akan otomatis masuk ke <strong>Tape Chart</strong> (blok oranye Agoda) dan <strong>Front Office</strong> (Arrivals Hari Ini).</li>
+              <li>Buka menu <strong>Tape Chart</strong> atau <strong>Front Office</strong> untuk melihat hasilnya secara langsung.</li>
+            </ol>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Action 1: Inbound Booking Simulation */}
-            <div className="p-4 bg-muted/20 border border-border rounded-xl space-y-3">
-              <h4 className="text-sm font-bold text-foreground">Simulate Inbound OTA Reservation</h4>
-              <p className="text-xs text-muted-foreground">
-                Triggers Agoda mock server to deliver a new 2-night Deluxe King booking from Bambang S. (Rp 1.760.000).
-                Decrements room type inventory in PMS and creates unassigned booking.
-              </p>
+            <div className="p-5 bg-muted/20 border border-border rounded-xl space-y-4">
+              <div>
+                <h4 className="text-sm font-bold text-foreground flex items-center gap-2">
+                  <Play className="w-4 h-4 text-rose-500" />
+                  1. Simulasikan Tamu Memesan dari Agoda
+                </h4>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Menghasilkan pesanan baru dari Agoda: Tamu <strong>Bambang Setyawan</strong>, Kamar <strong>Deluxe 202</strong>, Inap <strong>24 Nov – 27 Nov 2026</strong> (Rp 1.760.000).
+                </p>
+              </div>
+
               <button
                 disabled={isPushing}
                 onClick={handleSimulateInboundBooking}
-                className="w-full py-2.5 bg-rose-600 text-white rounded-lg text-xs font-bold hover:bg-rose-700 transition-colors flex items-center justify-center gap-2"
+                className="w-full py-3 bg-rose-600 text-white rounded-xl text-xs font-bold hover:bg-rose-700 transition-all shadow-sm flex items-center justify-center gap-2 disabled:opacity-50"
               >
-                <Play className="w-3.5 h-3.5" />
-                Trigger Inbound Agoda Booking
+                <Play className="w-4 h-4" />
+                {isPushing ? 'Memproses Simulasi...' : 'Trigger Inbound Agoda Booking'}
               </button>
+
+              <div className="pt-2 border-t border-border/60 flex items-center justify-between gap-2">
+                <span className="text-[11px] text-muted-foreground">Tinjau hasilnya:</span>
+                <div className="flex gap-2">
+                  <Link
+                    href="/bookings"
+                    className="px-2.5 py-1 bg-card hover:bg-muted border border-border text-foreground rounded text-[11px] font-semibold inline-flex items-center gap-1"
+                  >
+                    Buka Tape Chart <ArrowRight className="w-3 h-3 text-primary" />
+                  </Link>
+                  <Link
+                    href="/front-office"
+                    className="px-2.5 py-1 bg-card hover:bg-muted border border-border text-foreground rounded text-[11px] font-semibold inline-flex items-center gap-1"
+                  >
+                    Buka Front Desk <ArrowRight className="w-3 h-3 text-emerald-600" />
+                  </Link>
+                </div>
+              </div>
             </div>
 
             {/* Action 2: Error Resilience Test */}
-            <div className="p-4 bg-muted/20 border border-border rounded-xl space-y-3">
-              <h4 className="text-sm font-bold text-foreground">Resilience & Error Center Test</h4>
-              <p className="text-xs text-muted-foreground">
-                Injects simulated Agoda 429 Rate Limit or 504 Gateway Timeout to verify BullMQ retry backoff
-                and Error Center alerting.
-              </p>
-              <div className="flex gap-2">
+            <div className="p-5 bg-muted/20 border border-border rounded-xl space-y-4">
+              <div>
+                <h4 className="text-sm font-bold text-foreground flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-500" />
+                  2. Uji Coba Penanganan Error (Resilience Test)
+                </h4>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Menyimulasikan jika koneksi server Agoda sedang lambat atau membatasi request (Rate Limit 429 atau Timeout 504) untuk memastikan sistem tidak crash dan melakukan retry otomatis.
+                </p>
+              </div>
+
+              <div className="flex gap-2 pt-2">
                 <button
                   onClick={() => {
                     handlePushARI('AVAILABILITY');
                   }}
-                  className="flex-1 py-2.5 bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20 rounded-lg text-xs font-semibold hover:bg-amber-500/20 transition-colors"
+                  className="flex-1 py-3 bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20 rounded-xl text-xs font-semibold hover:bg-amber-500/20 transition-colors"
                 >
-                  Test 429 Rate Limit
+                  Uji 429 Rate Limit
                 </button>
                 <button
                   onClick={() => {
                     handlePushARI('AVAILABILITY');
                   }}
-                  className="flex-1 py-2.5 bg-rose-500/10 text-rose-700 dark:text-rose-300 border border-rose-500/20 rounded-lg text-xs font-semibold hover:bg-rose-500/20 transition-colors"
+                  className="flex-1 py-3 bg-rose-500/10 text-rose-700 dark:text-rose-300 border border-rose-500/20 rounded-xl text-xs font-semibold hover:bg-rose-500/20 transition-colors"
                 >
-                  Test 504 Timeout
+                  Uji 504 Timeout
                 </button>
               </div>
             </div>
