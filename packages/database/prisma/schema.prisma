@@ -1,0 +1,630 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ----------------------------------------------------
+// MULTI-TENANCY & PROPERTIES
+// ----------------------------------------------------
+model Property {
+  id              String   @id @default(uuid()) @db.Uuid
+  code            String   @unique @db.VarChar(50)
+  name            String   @db.VarChar(150)
+  city            String   @db.VarChar(100)
+  address         String?  @db.Text
+  timezone        String   @default("Asia/Jakarta") @db.VarChar(50)
+  defaultCurrency String   @default("IDR") @db.Char(3)
+  settings        Json?    @default("{}")
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now()) @db.Timestamptz()
+  updatedAt       DateTime @updatedAt @db.Timestamptz()
+
+  // Relations
+  users            User[]
+  roles            Role[]
+  roomTypes        RoomType[]
+  floors           Floor[]
+  rooms            Room[]
+  ratePlans        RatePlan[]
+  taxConfigs       TaxConfiguration[]
+  bookings         Booking[]
+  folios           Folio[]
+  channelAccounts  ChannelAccount[]
+  inventoryLedgers InventoryLedger[]
+  auditLogs        AuditLog[]
+  housekeepingTasks HousekeepingTask[]
+  nightAudits      NightAudit[]
+
+  @@map("properties")
+}
+
+// ----------------------------------------------------
+// USERS, ROLES & RBAC
+// ----------------------------------------------------
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  propertyId   String    @db.Uuid
+  email        String    @unique @db.VarChar(150)
+  passwordHash String    @db.VarChar(255)
+  fullName     String    @db.VarChar(150)
+  phone        String?   @db.VarChar(50)
+  isActive     Boolean   @default(true)
+  totpSecret   String?   @db.VarChar(100)
+  refreshTokenHash String? @db.VarChar(255)
+  lastLoginAt  DateTime? @db.Timestamptz()
+  createdAt    DateTime  @default(now()) @db.Timestamptz()
+  updatedAt    DateTime  @updatedAt @db.Timestamptz()
+
+  property  Property   @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  userRoles UserRole[]
+  auditLogs AuditLog[]
+
+  @@index([propertyId])
+  @@map("users")
+}
+
+model Role {
+  id          String   @id @default(uuid()) @db.Uuid
+  propertyId  String?  @db.Uuid
+  name        String   @db.VarChar(50)
+  description String?  @db.VarChar(255)
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now()) @db.Timestamptz()
+
+  property        Property?        @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  @@unique([propertyId, name])
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @default(uuid()) @db.Uuid
+  code        String   @unique @db.VarChar(100)
+  module      String   @db.VarChar(50)
+  description String?  @db.VarChar(255)
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model UserRole {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  roleId String @db.Uuid
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@map("user_roles")
+}
+
+model RolePermission {
+  id           String @id @default(uuid()) @db.Uuid
+  roleId       String @db.Uuid
+  permissionId String @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+// ----------------------------------------------------
+// CONFIGURABLE TAX ENGINE
+// ----------------------------------------------------
+model TaxConfiguration {
+  id               String   @id @default(uuid()) @db.Uuid
+  propertyId       String   @db.Uuid
+  code             String   @db.VarChar(50)
+  name             String   @db.VarChar(100)
+  ratePercentage   Decimal  @db.Decimal(5, 2)
+  calculationOrder Int      @default(1)
+  isInclusive      Boolean  @default(false)
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now()) @db.Timestamptz()
+
+  property      Property       @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  ratePlanTaxes RatePlanTax[]
+
+  @@unique([propertyId, code])
+  @@map("tax_configurations")
+}
+
+model RatePlanTax {
+  id                 String @id @default(uuid()) @db.Uuid
+  ratePlanId         String @db.Uuid
+  taxConfigurationId String @db.Uuid
+
+  ratePlan         RatePlan         @relation(fields: [ratePlanId], references: [id], onDelete: Cascade)
+  taxConfiguration TaxConfiguration @relation(fields: [taxConfigurationId], references: [id], onDelete: Cascade)
+
+  @@unique([ratePlanId, taxConfigurationId])
+  @@map("rate_plan_taxes")
+}
+
+// ----------------------------------------------------
+// PROPERTY ROOM INVENTORY & CONFIGURATION
+// ----------------------------------------------------
+model Floor {
+  id          String   @id @default(uuid()) @db.Uuid
+  propertyId  String   @db.Uuid
+  floorNumber Int
+  name        String   @db.VarChar(50)
+  createdAt   DateTime @default(now()) @db.Timestamptz()
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  rooms    Room[]
+
+  @@unique([propertyId, floorNumber])
+  @@map("floors")
+}
+
+model RoomType {
+  id            String   @id @default(uuid()) @db.Uuid
+  propertyId    String   @db.Uuid
+  code          String   @db.VarChar(50)
+  name          String   @db.VarChar(100)
+  description   String?  @db.Text
+  totalRooms    Int      @default(0)
+  baseOccupancy Int      @default(2)
+  maxOccupancy  Int      @default(3)
+  amenities     String[] @default([])
+  photos        String[] @default([])
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now()) @db.Timestamptz()
+  updatedAt     DateTime @updatedAt @db.Timestamptz()
+
+  property         Property                 @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  rooms            Room[]
+  ratePlanRooms    RatePlanRoom[]
+  inventoryLedgers InventoryLedger[]
+  bookingRooms     BookingRoom[]
+  channelMappings  ChannelMapping[]
+  rateRestrictions RateRestrictionLedger[]
+
+  @@unique([propertyId, code])
+  @@map("room_types")
+}
+
+model Room {
+  id                 String   @id @default(uuid()) @db.Uuid
+  propertyId         String   @db.Uuid
+  roomTypeId         String   @db.Uuid
+  floorId            String   @db.Uuid
+  roomNumber         String   @db.VarChar(20)
+  operationalStatus  String   @default("AVAILABLE") @db.VarChar(30)
+  housekeepingStatus String   @default("CLEAN") @db.VarChar(30)
+  isClean            Boolean  @default(true)
+  notes              String?  @db.Text
+  createdAt          DateTime @default(now()) @db.Timestamptz()
+  updatedAt          DateTime @updatedAt @db.Timestamptz()
+
+  property          Property           @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  roomType          RoomType           @relation(fields: [roomTypeId], references: [id], onDelete: Restrict)
+  floor             Floor              @relation(fields: [floorId], references: [id], onDelete: Restrict)
+  bookingRooms      BookingRoom[]
+  housekeepingTasks HousekeepingTask[]
+
+  @@unique([propertyId, roomNumber])
+  @@index([propertyId, roomTypeId])
+  @@map("rooms")
+}
+
+// ----------------------------------------------------
+// PRICING, RATE PLANS & RESTRICTIONS
+// ----------------------------------------------------
+model RatePlan {
+  id          String   @id @default(uuid()) @db.Uuid
+  propertyId  String   @db.Uuid
+  code        String   @db.VarChar(50)
+  name        String   @db.VarChar(100)
+  description String?  @db.Text
+  isDerived   Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now()) @db.Timestamptz()
+
+  property         Property                 @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  ratePlanRooms    RatePlanRoom[]
+  ratePlanTaxes    RatePlanTax[]
+  rateRestrictions RateRestrictionLedger[]
+  bookingRooms     BookingRoom[]
+  channelMappings  ChannelMapping[]
+
+  @@unique([propertyId, code])
+  @@map("rate_plans")
+}
+
+model RatePlanRoom {
+  id         String @id @default(uuid()) @db.Uuid
+  ratePlanId String @db.Uuid
+  roomTypeId String @db.Uuid
+  basePrice  BigInt @default(0) // integer minor unit
+  currency   String @default("IDR") @db.Char(3)
+
+  ratePlan RatePlan @relation(fields: [ratePlanId], references: [id], onDelete: Cascade)
+  roomType RoomType @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([ratePlanId, roomTypeId])
+  @@map("rate_plan_rooms")
+}
+
+// ----------------------------------------------------
+// INVENTORY LEDGER & RATE RESTRICTIONS
+// ----------------------------------------------------
+model InventoryLedger {
+  id             String   @id @default(uuid()) @db.Uuid
+  propertyId     String   @db.Uuid
+  roomTypeId     String   @db.Uuid
+  date           DateTime @db.Date
+  totalInventory Int      @default(0)
+  bookedCount    Int      @default(0)
+  oooCount       Int      @default(0)
+  availableCount Int      @default(0)
+  lockVersion    Int      @default(0)
+  updatedAt      DateTime @updatedAt @db.Timestamptz()
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  roomType RoomType @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, roomTypeId, date])
+  @@index([propertyId, date])
+  @@map("inventory_ledger")
+}
+
+model RateRestrictionLedger {
+  id                  String   @id @default(uuid()) @db.Uuid
+  propertyId          String   @db.Uuid
+  ratePlanId          String   @db.Uuid
+  roomTypeId          String   @db.Uuid
+  date                DateTime @db.Date
+  price               BigInt // minor units
+  currency            String   @default("IDR") @db.Char(3)
+  minStayArrival      Int      @default(1)
+  maxStay             Int?
+  isClosed            Boolean  @default(false)
+  isClosedToArrival   Boolean  @default(false)
+  isClosedToDeparture Boolean  @default(false)
+
+  ratePlan RatePlan @relation(fields: [ratePlanId], references: [id], onDelete: Cascade)
+  roomType RoomType @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, ratePlanId, roomTypeId, date])
+  @@index([propertyId, date])
+  @@map("rate_restriction_ledger")
+}
+
+// ----------------------------------------------------
+// GUESTS & BOOKINGS
+// ----------------------------------------------------
+model Guest {
+  id          String   @id @default(uuid()) @db.Uuid
+  propertyId  String   @db.Uuid
+  firstName   String   @db.VarChar(100)
+  lastName    String?  @db.VarChar(100)
+  email       String?  @db.VarChar(150)
+  phone       String?  @db.VarChar(50)
+  idType      String?  @db.VarChar(30) // KTP, Passport, SIM
+  idNumber    String?  @db.VarChar(100)
+  nationality String   @default("ID") @db.VarChar(10)
+  vipStatus   String   @default("STANDARD") @db.VarChar(30)
+  notes       String?  @db.Text
+  createdAt   DateTime @default(now()) @db.Timestamptz()
+  updatedAt   DateTime @updatedAt @db.Timestamptz()
+
+  bookings      Booking[]
+  bookingGuests BookingGuest[]
+
+  @@index([propertyId, email])
+  @@index([propertyId, phone])
+  @@map("guests")
+}
+
+model Booking {
+  id                String    @id @default(uuid()) @db.Uuid
+  propertyId        String    @db.Uuid
+  bookingNumber     String    @unique @db.VarChar(50)
+  channelReference  String?   @db.VarChar(100)
+  primaryGuestId    String    @db.Uuid
+  bookingSource     String    @default("DIRECT") @db.VarChar(50)
+  status            String    @default("CONFIRMED") @db.VarChar(30)
+  checkInDate       DateTime  @db.Date
+  checkOutDate      DateTime  @db.Date
+  actualCheckInAt   DateTime? @db.Timestamptz()
+  actualCheckOutAt  DateTime? @db.Timestamptz()
+  totalAmount       BigInt    @default(0) // minor unit
+  totalPaid         BigInt    @default(0) // minor unit
+  currency          String    @default("IDR") @db.Char(3)
+  paymentStatus     String    @default("UNPAID") @db.VarChar(30)
+  specialRequests   String?   @db.Text
+  metadata          Json?     @default("{}")
+  createdAt         DateTime  @default(now()) @db.Timestamptz()
+  updatedAt         DateTime  @updatedAt @db.Timestamptz()
+
+  property      Property       @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  primaryGuest  Guest          @relation(fields: [primaryGuestId], references: [id], onDelete: Restrict)
+  bookingRooms  BookingRoom[]
+  bookingGuests BookingGuest[]
+  folios        Folio[]
+  payments      Payment[]
+
+  @@index([propertyId, status])
+  @@index([propertyId, checkInDate])
+  @@index([propertyId, checkOutDate])
+  @@map("bookings")
+}
+
+model BookingGuest {
+  id        String  @id @default(uuid()) @db.Uuid
+  bookingId String  @db.Uuid
+  guestId   String  @db.Uuid
+  isPrimary Boolean @default(false)
+  guestType String  @default("ADULT") @db.VarChar(20)
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  guest   Guest   @relation(fields: [guestId], references: [id], onDelete: Cascade)
+
+  @@unique([bookingId, guestId])
+  @@map("booking_guests")
+}
+
+model BookingRoom {
+  id         String   @id @default(uuid()) @db.Uuid
+  bookingId  String   @db.Uuid
+  roomTypeId String   @db.Uuid
+  roomId     String?  @db.Uuid // Nullable for unassigned OTA bookings!
+  ratePlanId String   @db.Uuid
+  checkInDate DateTime @db.Date
+  checkOutDate DateTime @db.Date
+  roomRate   BigInt   @default(0) // minor unit
+  currency   String   @default("IDR") @db.Char(3)
+  roomStatus String   @default("CONFIRMED") @db.VarChar(30)
+  createdAt  DateTime @default(now()) @db.Timestamptz()
+  updatedAt  DateTime @updatedAt @db.Timestamptz()
+
+  booking  Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  roomType RoomType @relation(fields: [roomTypeId], references: [id], onDelete: Restrict)
+  room     Room?    @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  ratePlan RatePlan @relation(fields: [ratePlanId], references: [id], onDelete: Restrict)
+
+  @@index([bookingId])
+  @@index([roomId])
+  @@index([roomTypeId])
+  @@map("booking_rooms")
+}
+
+// ----------------------------------------------------
+// FOLIO, PAYMENTS & INVOICES
+// ----------------------------------------------------
+model Folio {
+  id            String   @id @default(uuid()) @db.Uuid
+  propertyId    String   @db.Uuid
+  bookingId     String   @db.Uuid
+  folioNumber   String   @unique @db.VarChar(50)
+  status        String   @default("OPEN") @db.VarChar(30)
+  totalCharges  BigInt   @default(0)
+  totalPayments BigInt   @default(0)
+  balance       BigInt   @default(0)
+  currency      String   @default("IDR") @db.Char(3)
+  createdAt     DateTime @default(now()) @db.Timestamptz()
+  updatedAt     DateTime @updatedAt @db.Timestamptz()
+
+  property     Property           @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  booking      Booking            @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  transactions FolioTransaction[]
+  payments     Payment[]
+  invoices     Invoice[]
+
+  @@map("folios")
+}
+
+model FolioTransaction {
+  id              String   @id @default(uuid()) @db.Uuid
+  folioId         String   @db.Uuid
+  transactionType String   @db.VarChar(30) // CHARGE, PAYMENT, ADJUSTMENT
+  category        String   @db.VarChar(50) // ROOM, TAX_PBJT, SERVICE_CHARGE, ADDON
+  amount          BigInt   // minor units
+  currency        String   @default("IDR") @db.Char(3)
+  description     String   @db.VarChar(255)
+  createdBy       String?  @db.Uuid
+  createdAt       DateTime @default(now()) @db.Timestamptz()
+
+  folio Folio @relation(fields: [folioId], references: [id], onDelete: Cascade)
+
+  @@index([folioId])
+  @@map("folio_transactions")
+}
+
+model Payment {
+  id                   String   @id @default(uuid()) @db.Uuid
+  propertyId           String   @db.Uuid
+  folioId              String   @db.Uuid
+  bookingId            String   @db.Uuid
+  amount               BigInt   // minor units
+  currency             String   @default("IDR") @db.Char(3)
+  paymentMethod        String   @db.VarChar(50) // CASH, EDC_CARD, BANK_TRANSFER, QRIS
+  status               String   @default("SUCCESS") @db.VarChar(30)
+  gateway              String?  @db.VarChar(50) // MIDTRANS, XENDIT
+  gatewayTransactionId String?  @db.VarChar(100)
+  metadata             Json?    @default("{}")
+  createdBy            String?  @db.Uuid
+  createdAt            DateTime @default(now()) @db.Timestamptz()
+
+  folio   Folio   @relation(fields: [folioId], references: [id], onDelete: Cascade)
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId])
+  @@index([folioId])
+  @@map("payments")
+}
+
+model Invoice {
+  id            String    @id @default(uuid()) @db.Uuid
+  folioId       String    @db.Uuid
+  invoiceNumber String    @unique @db.VarChar(50)
+  issuedAt      DateTime  @default(now()) @db.Timestamptz()
+  pdfUrl        String?   @db.VarChar(255)
+  totalAmount   BigInt
+  currency      String    @default("IDR") @db.Char(3)
+  taxSummary    Json      @default("{}")
+
+  folio Folio @relation(fields: [folioId], references: [id], onDelete: Cascade)
+
+  @@map("invoices")
+}
+
+// ----------------------------------------------------
+// CHANNEL MANAGER INTEGRATION & LOGS
+// ----------------------------------------------------
+model ChannelAccount {
+  id                    String    @id @default(uuid()) @db.Uuid
+  propertyId            String    @db.Uuid
+  channelCode           String    @db.VarChar(50) // AGODA, BOOKING_COM, etc.
+  credentialsEncrypted  String    @db.Text
+  isActive              Boolean   @default(true)
+  isMock                Boolean   @default(true)
+  lastSyncAt            DateTime? @db.Timestamptz()
+  createdAt             DateTime  @default(now()) @db.Timestamptz()
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  mappings ChannelMapping[]
+  syncLogs ChannelSyncLog[]
+
+  @@unique([propertyId, channelCode])
+  @@map("channel_accounts")
+}
+
+model ChannelMapping {
+  id               String   @id @default(uuid()) @db.Uuid
+  channelAccountId String   @db.Uuid
+  roomTypeId       String   @db.Uuid
+  ratePlanId       String   @db.Uuid
+  otaRoomCode      String   @db.VarChar(100)
+  otaRatePlanCode  String   @db.VarChar(100)
+  rateMultiplier   Decimal  @default(1.00) @db.Decimal(5, 4)
+  isActive         Boolean  @default(true)
+
+  channelAccount ChannelAccount @relation(fields: [channelAccountId], references: [id], onDelete: Cascade)
+  roomType       RoomType       @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+  ratePlan       RatePlan       @relation(fields: [ratePlanId], references: [id], onDelete: Cascade)
+
+  @@unique([channelAccountId, roomTypeId, ratePlanId])
+  @@map("channel_mappings")
+}
+
+model ChannelSyncLog {
+  id               String   @id @default(uuid()) @db.Uuid
+  channelAccountId String   @db.Uuid
+  syncType         String   @db.VarChar(50) // ARI_AVAILABILITY, ARI_RATES, RESERVATION_PULL
+  direction        String   @db.VarChar(10) // PUSH, PULL
+  status           String   @db.VarChar(30) // SUCCESS, ERROR, RETRY
+  httpStatus       Int?
+  requestPayload   Json?
+  responsePayload  Json?
+  errorMessage     String?  @db.Text
+  createdAt        DateTime @default(now()) @db.Timestamptz()
+
+  channelAccount ChannelAccount @relation(fields: [channelAccountId], references: [id], onDelete: Cascade)
+
+  @@index([channelAccountId, createdAt])
+  @@map("channel_sync_logs")
+}
+
+// ----------------------------------------------------
+// HOUSEKEEPING, NIGHT AUDIT & OPERATIONS
+// ----------------------------------------------------
+model HousekeepingTask {
+  id          String    @id @default(uuid()) @db.Uuid
+  propertyId  String    @db.Uuid
+  roomId      String    @db.Uuid
+  taskType    String    @default("CLEAN") @db.VarChar(50)
+  status      String    @default("PENDING") @db.VarChar(30)
+  assignedTo  String?   @db.Uuid
+  completedAt DateTime? @db.Timestamptz()
+  notes       String?   @db.Text
+  createdAt   DateTime  @default(now()) @db.Timestamptz()
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  room     Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId, status])
+  @@map("housekeeping_tasks")
+}
+
+model NightAudit {
+  id           String   @id @default(uuid()) @db.Uuid
+  propertyId   String   @db.Uuid
+  businessDate DateTime @db.Date
+  executedAt   DateTime @default(now()) @db.Timestamptz()
+  executedBy   String?  @db.Uuid
+  status       String   @default("COMPLETED") @db.VarChar(30)
+  roomsAudited Int      @default(0)
+  revenuePosted BigInt  @default(0)
+  summary      Json?    @default("{}")
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, businessDate])
+  @@map("night_audits")
+}
+
+// ----------------------------------------------------
+// RESILIENCE, AUDIT & CONCURRENCY INFRASTRUCTURE
+// ----------------------------------------------------
+model OutboxEvent {
+  id            String    @id @default(uuid()) @db.Uuid
+  eventType     String    @db.VarChar(100)
+  aggregateType String    @db.VarChar(100)
+  aggregateId   String    @db.Uuid
+  payload       Json
+  status        String    @default("PENDING") @db.VarChar(30)
+  retryCount    Int       @default(0)
+  lastError     String?   @db.Text
+  createdAt     DateTime  @default(now()) @db.Timestamptz()
+  processedAt   DateTime? @db.Timestamptz()
+
+  @@index([status, createdAt])
+  @@map("outbox_events")
+}
+
+model IdempotencyKey {
+  id              String   @id @default(uuid()) @db.Uuid
+  key             String   @unique @db.VarChar(255)
+  path            String   @db.VarChar(255)
+  requestChecksum String   @db.VarChar(64)
+  responseCode    Int
+  responseBody    Json
+  expiresAt       DateTime @db.Timestamptz()
+  createdAt       DateTime @default(now()) @db.Timestamptz()
+
+  @@index([expiresAt])
+  @@map("idempotency_keys")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  propertyId String   @db.Uuid
+  userId     String?  @db.Uuid
+  action     String   @db.VarChar(100)
+  entityType String   @db.VarChar(100)
+  entityId   String   @db.VarChar(100)
+  oldValues  Json?
+  newValues  Json?
+  ipAddress  String?  @db.VarChar(50)
+  userAgent  String?  @db.VarChar(255)
+  createdAt  DateTime @default(now()) @db.Timestamptz()
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  user     User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([propertyId, createdAt])
+  @@map("audit_logs")
+}

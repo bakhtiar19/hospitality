@@ -1,0 +1,47 @@
+{
+  "common": {
+    "appName": "Hospitality PMS",
+    "search": "Search bookings, guests, rooms... (Ctrl+K)",
+    "today": "Today",
+    "status": "Status",
+    "actions": "Actions",
+    "save": "Save",
+    "cancel": "Cancel",
+    "viewAll": "View All",
+    "refresh": "Refresh"
+  },
+  "modules": {
+    "dashboard": "Dashboard",
+    "settings": "Settings",
+    "bookings": "Bookings & Tape Chart",
+    "rates": "Rates & Inventory",
+    "channels": "Channel Manager",
+    "frontOffice": "Front Office",
+    "housekeeping": "Housekeeping",
+    "backOffice": "Back Office & Billing",
+    "bookingEngine": "Booking Engine",
+    "payments": "Payments",
+    "crm": "Guest CRM",
+    "otaContent": "OTA Content",
+    "reports": "Reports & Analytics",
+    "account": "Account & Security"
+  },
+  "dashboard": {
+    "announcement": "Channel Manager connected to Agoda Sandbox. All ARI updates are syncing automatically.",
+    "revenueSummary": "Revenue Summary",
+    "revenueToday": "Today's Revenue",
+    "revenueMtd": "Month-to-Date (MTD)",
+    "revenueYtd": "Year-to-Date (YTD)",
+    "bookingsOverview": "Bookings Overview",
+    "bookingsToday": "Bookings Today",
+    "roomsAvailable": "Available Rooms",
+    "checkIns": "Today's Check-ins",
+    "checkOuts": "Today's Check-outs",
+    "recentBookings": "Recent Bookings",
+    "propertyCard": "Active Property",
+    "directBookingLink": "View Public Booking Engine",
+    "channelStatus": "OTA Channel Health",
+    "errorCenter": "Error & Alert Center",
+    "quickAccess": "Quick Access"
+  }
+}

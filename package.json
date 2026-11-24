@@ -1,0 +1,22 @@
+{
+  "name": "hospitality-pms-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "pnpm@12.23.0",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "test:e2e": "turbo run test:e2e",
+    "format": "prettier --write \"**/*.{ts,tsx,md,json}\"",
+    "db:generate": "pnpm --filter @hospitality/database db:generate",
+    "db:migrate": "pnpm --filter @hospitality/database db:migrate",
+    "db:seed": "pnpm --filter @hospitality/database db:seed"
+  },
+  "devDependencies": {
+    "prettier": "^3.5.2",
+    "turbo": "^2.4.4",
+    "typescript": "^5.7.3"
+  }
+}

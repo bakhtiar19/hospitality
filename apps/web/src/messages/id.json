@@ -1,0 +1,47 @@
+{
+  "common": {
+    "appName": "Hospitality PMS",
+    "search": "Cari reservasi, tamu, kamar... (Ctrl+K)",
+    "today": "Hari Ini",
+    "status": "Status",
+    "actions": "Aksi",
+    "save": "Simpan",
+    "cancel": "Batal",
+    "viewAll": "Lihat Semua",
+    "refresh": "Segarkan"
+  },
+  "modules": {
+    "dashboard": "Dashboard",
+    "settings": "Pengaturan",
+    "bookings": "Reservasi & Tape Chart",
+    "rates": "Harga & Ketersediaan",
+    "channels": "Channel Manager",
+    "frontOffice": "Front Office",
+    "housekeeping": "Housekeeping",
+    "backOffice": "Back Office & Tagihan",
+    "bookingEngine": "Mesin Pemesanan",
+    "payments": "Pembayaran",
+    "crm": "Guest CRM",
+    "otaContent": "Konten OTA",
+    "reports": "Laporan & Analitik",
+    "account": "Akun & Keamanan"
+  },
+  "dashboard": {
+    "announcement": "Sistem Channel Manager terhubung ke Agoda Sandbox. Semua pembaruan ARI tersinkronisasi otomatis.",
+    "revenueSummary": "Ringkasan Pendapatan",
+    "revenueToday": "Pendapatan Hari Ini",
+    "revenueMtd": "Pendapatan Bulan Ini (MTD)",
+    "revenueYtd": "Pendapatan Tahun Ini (YTD)",
+    "bookingsOverview": "Ringkasan Reservasi",
+    "bookingsToday": "Pesanan Hari Ini",
+    "roomsAvailable": "Kamar Tersedia",
+    "checkIns": "Check-in Hari Ini",
+    "checkOuts": "Check-out Hari Ini",
+    "recentBookings": "Reservasi Terbaru",
+    "propertyCard": "Properti Aktif",
+    "directBookingLink": "Lihat Mesin Pemesanan Publik",
+    "channelStatus": "Status Saluran OTA",
+    "errorCenter": "Pusat Kesalahan & Peringatan",
+    "quickAccess": "Akses Cepat"
+  }
+}
