@@ -1,11 +1,12 @@
 [build]
-  base = "."
   command = "pnpm --filter @hospitality/shared-types build && pnpm --filter @hospitality/web build"
-  publish = "apps/web/.next"
+  publish = "apps/web/out"
 
 [build.environment]
-  NODE_VERSION = "20"
-  PNPM_FLAGS = "--shamefully-hoist"
+  NODE_VERSION = "22"
+  NETLIFY_NEXT_PLUGIN_SKIP = "true"
 
-[[plugins]]
-  package = "@netlify/plugin-nextjs"
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
