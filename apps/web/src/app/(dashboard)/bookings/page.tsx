@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useMemo, useEffect } from 'react';
+import Link from 'next/link';
 import {
   Calendar as CalendarIcon,
   ChevronLeft,
@@ -32,6 +33,8 @@ import {
   DollarSign,
   Phone,
   Compass,
+  Receipt,
+  Printer,
 } from 'lucide-react';
 import { useI18n } from '../../../providers/intl-provider';
 import { formatCurrency } from '../../../lib/utils';
@@ -135,6 +138,7 @@ export default function BookingsTapeChartPage() {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [moveModalOpen, setMoveModalOpen] = useState(false);
   const [targetRoom, setTargetRoom] = useState(mockRooms[0].number);
+  const [printedReceiptBooking, setPrintedReceiptBooking] = useState<TapeChartBooking | null>(null);
 
   // Notification System
   const [notification, setNotification] = useState<PMSNotification | null>({
@@ -304,15 +308,35 @@ export default function BookingsTapeChartPage() {
   };
 
   const handleCheckOutNow = (booking: TapeChartBooking) => {
-    const updated = bookings.map((b) => (b.id === booking.id ? { ...b, status: 'CHECKED_OUT' as const } : b));
+    const today = '2026-11-24';
+    const isEarly = booking.checkOutDate > today;
+    const updated = bookings.map((b) =>
+      b.id === booking.id
+        ? {
+            ...b,
+            status: 'CHECKED_OUT' as const,
+            checkOutDate: isEarly ? today : b.checkOutDate,
+          }
+        : b
+    );
     setBookings(updated);
     saveStoredBookings(updated);
-    setSelectedBooking((prev) => (prev ? { ...prev, status: 'CHECKED_OUT' } : null));
+    setSelectedBooking((prev) =>
+      prev
+        ? {
+            ...prev,
+            status: 'CHECKED_OUT',
+            checkOutDate: isEarly ? today : prev.checkOutDate,
+          }
+        : null
+    );
     setNotification({
       id: `notif-${Date.now()}`,
       type: 'info',
-      title: 'Tamu Selesai Check-Out',
-      message: `Tamu ${booking.guestName} telah selesai check-out dari Kamar ${booking.roomNumber}. Kamar siap dibersihkan.`,
+      title: isEarly ? 'Early Check-Out Selesai' : 'Tamu Selesai Check-Out',
+      message: isEarly
+        ? `Tamu ${booking.guestName} telah check-out lebih awal dari Kamar ${booking.roomNumber}. Sisa malam dilepas dan kamar kembali tersedia di kalender.`
+        : `Tamu ${booking.guestName} telah selesai check-out dari Kamar ${booking.roomNumber}. Kamar siap dibersihkan.`,
       time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB',
     });
   };
@@ -925,12 +949,36 @@ export default function BookingsTapeChartPage() {
                 {selectedBooking.status === 'IN_HOUSE' && (
                   <button
                     onClick={() => handleCheckOutNow(selectedBooking)}
-                    className="w-full py-2 px-3 text-xs font-bold rounded-xl bg-slate-700 hover:bg-slate-800 text-white flex items-center justify-center gap-2 shadow-xs transition-colors"
+                    className={`w-full py-2 px-3 text-xs font-bold rounded-xl text-white flex items-center justify-center gap-2 shadow-xs transition-colors ${
+                      selectedBooking.checkOutDate > '2026-11-24'
+                        ? 'bg-amber-600 hover:bg-amber-700'
+                        : 'bg-slate-700 hover:bg-slate-800'
+                    }`}
                   >
                     <Flag className="w-4 h-4" />
-                    Proses Check-Out Tamu (Selesai Menginap)
+                    {selectedBooking.checkOutDate > '2026-11-24'
+                      ? 'Proses Early Check-Out (Lepas Sisa Malam Ini)'
+                      : 'Proses Check-Out Tamu (Selesai Menginap)'}
                   </button>
                 )}
+
+                {selectedBooking.status === 'CHECKED_OUT' && (
+                  <Link
+                    href="/back-office"
+                    className="w-full py-2 px-3 text-xs font-bold rounded-xl bg-primary hover:bg-primary/90 text-white flex items-center justify-center gap-2 shadow-xs transition-colors"
+                  >
+                    <Receipt className="w-4 h-4" />
+                    Buka Arsip & Cetak Ulang Nota Resmi
+                  </Link>
+                )}
+
+                <button
+                  onClick={() => setPrintedReceiptBooking(selectedBooking)}
+                  className="w-full py-2 px-3 text-xs font-bold rounded-xl bg-card border border-border hover:bg-muted text-foreground flex items-center justify-center gap-2 shadow-2xs transition-colors"
+                >
+                  <Printer className="w-3.5 h-3.5 text-primary" />
+                  Cetak Nota / Tanda Terima Pembayaran
+                </button>
 
                 <div className="flex items-center gap-2 pt-1">
                   <button
@@ -1273,15 +1321,116 @@ export default function BookingsTapeChartPage() {
                     id: `notif-${Date.now()}`,
                     type: 'success',
                     title: 'Reservasi Baru Berhasil Disimpan!',
-                    message: `Reservasi ${newB.bookingNumber} (${newB.guestName} - Kamar ${newB.roomNumber}) untuk tanggal ${newB.checkInDate} s/d ${newB.checkOutDate} berhasil dibuat. Tape Chart otomatis dialihkan ke tanggal reservasi.`,
+                    message: `Reservasi ${newB.bookingNumber} (${newB.guestName} - Kamar ${newB.roomNumber}) berhasil dibuat. Nota Pembayaran & Tanda Terima siap dicetak.`,
                     time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB',
                   });
                   setCreateModalOpen(false);
+                  setPrintedReceiptBooking(newB);
                 }}
                 className="px-5 py-2 bg-primary text-white rounded-lg font-bold shadow-xs hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-1.5"
               >
                 <CheckCircle2 className="w-4 h-4" />
                 Simpan & Konfirmasi Reservasi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Official Receipt / Folio Modal for New or Past Bookings */}
+      {printedReceiptBooking && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-lg bg-card border border-border rounded-2xl p-6 shadow-2xl space-y-4 text-xs animate-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div className="flex items-center gap-2">
+                <Receipt className="w-4 h-4 text-emerald-600" />
+                <h3 className="text-sm font-bold text-foreground">
+                  Nota Pembayaran / Guest Folio Resmi
+                </h3>
+              </div>
+              <button
+                onClick={() => setPrintedReceiptBooking(null)}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Hotel Letterhead & Invoice Number */}
+            <div className="p-4 bg-muted/20 border border-border rounded-xl space-y-3">
+              <div className="flex justify-between items-start border-b border-border pb-2.5">
+                <div>
+                  <h4 className="font-extrabold text-sm text-foreground">Hotel Winotosastro AProject</h4>
+                  <p className="text-[11px] text-muted-foreground">Jl. Brigjend Slamet Riyadi, Surakarta, Jawa Tengah</p>
+                  <p className="text-[10px] text-muted-foreground font-mono">NPWPD: 33.72.01.284.910-001 (Bapenda Solo)</p>
+                </div>
+                <div className="text-right">
+                  <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-600 font-bold text-[10px] border border-emerald-500/20">
+                    {(printedReceiptBooking.balance ?? 0) === 0 ? 'LUNAS (PAID)' : 'DEPOSIT DITERIMA'}
+                  </span>
+                  <div className="font-mono font-bold text-xs mt-1 text-primary">
+                    INV-{printedReceiptBooking.bookingNumber}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground font-mono">
+                    Sumber: {printedReceiptBooking.source}
+                  </div>
+                </div>
+              </div>
+
+              {/* Guest & Room Details */}
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div>
+                  <span className="text-[10px] text-muted-foreground uppercase font-bold block">Tamu (Billed To)</span>
+                  <div className="font-bold text-foreground">{printedReceiptBooking.guestName}</div>
+                  <div className="text-muted-foreground font-mono text-[11px]">{printedReceiptBooking.phone || '-'}</div>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] text-muted-foreground uppercase font-bold block">Kamar & Durasi</span>
+                  <div className="font-bold text-foreground">Kamar {printedReceiptBooking.roomNumber} ({printedReceiptBooking.roomType})</div>
+                  <div className="text-muted-foreground text-[11px]">
+                    {printedReceiptBooking.checkInDate} s/d {printedReceiptBooking.checkOutDate}
+                  </div>
+                </div>
+              </div>
+
+              {/* Breakdown */}
+              <div className="border-t border-border pt-2 space-y-1.5 text-xs">
+                <div className="flex justify-between text-muted-foreground">
+                  <span>Sewa Kamar ({printedReceiptBooking.ratePlan}):</span>
+                  <span className="font-mono text-foreground">{formatCurrency(printedReceiptBooking.totalAmount)}</span>
+                </div>
+                <div className="flex justify-between text-muted-foreground text-[11px]">
+                  <span>Termasuk PBJT Hotel 10% & Service 10%:</span>
+                  <span className="font-mono text-emerald-600 font-semibold">Tercakup Resmi</span>
+                </div>
+                <div className="border-t border-border pt-1.5 flex justify-between font-bold text-sm">
+                  <span className="text-foreground">Total Tagihan:</span>
+                  <span className="font-mono text-emerald-600">{formatCurrency(printedReceiptBooking.totalAmount)}</span>
+                </div>
+                <div className="flex justify-between text-muted-foreground text-[11px]">
+                  <span>Status Saldo:</span>
+                  <span className="font-mono font-bold text-emerald-600">
+                    {(printedReceiptBooking.balance ?? 0) === 0 ? 'Rp 0 (Lunas 100%)' : `Sisa Tagihan: ${formatCurrency(printedReceiptBooking.balance!)}`}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                onClick={() => window.print()}
+                className="flex-1 px-4 py-2 bg-primary text-white rounded-lg font-bold shadow-xs hover:bg-primary/90 transition-colors flex items-center justify-center gap-1.5"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                Cetak Nota / Unduh PDF
+              </button>
+              <button
+                onClick={() => setPrintedReceiptBooking(null)}
+                className="px-4 py-2 bg-muted hover:bg-muted/80 rounded-lg font-semibold transition-colors text-foreground"
+              >
+                Tutup
               </button>
             </div>
           </div>

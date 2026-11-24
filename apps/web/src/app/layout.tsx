@@ -5,7 +5,7 @@ import { QueryProvider } from '../providers/query-provider';
 import { IntlProvider } from '../providers/intl-provider';
 
 export const metadata: Metadata = {
-  title: 'Hospitality PMS & Channel Manager | Hotel Winotosastro by Athelu',
+  title: 'Hospitality PMS & Channel Manager | Hotel Winotosastro AProject',
   description: 'Production-grade Multi-Tenant Hotel Property Management System with Integrated Agoda Channel Manager',
 };
 

@@ -75,7 +75,7 @@ export function Sidebar() {
                 Hospitality PMS
               </span>
               <span className="text-xs text-sidebar-foreground/60 truncate">
-                by Athelu
+                by AProject
               </span>
             </div>
           )}

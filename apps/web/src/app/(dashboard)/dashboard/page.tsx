@@ -534,7 +534,7 @@ export default function DashboardPage() {
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
             </div>
             <h4 className="mt-2 font-bold text-base text-foreground">
-              Hotel Winotosastro by Athelu
+              Hotel Winotosastro AProject
             </h4>
             <p className="text-xs text-muted-foreground">
               Jl. Brigjend Slamet Riyadi, Surakarta (Solo), Central Java

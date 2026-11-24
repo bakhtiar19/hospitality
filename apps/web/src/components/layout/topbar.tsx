@@ -19,7 +19,7 @@ interface TopbarProps {
 }
 
 const mockProperties = [
-  { id: 'prop-1', name: 'Hotel Winotosastro by Athelu', city: 'Surakarta (Solo)', active: true },
+  { id: 'prop-1', name: 'Hotel Winotosastro AProject', city: 'Surakarta (Solo)', active: true },
   { id: 'prop-2', name: 'Grand Merdeka Boutique Hotel', city: 'Yogyakarta', active: false },
   { id: 'prop-3', name: 'Candi Heritage Resort', city: 'Magelang', active: false },
 ];
@@ -140,7 +140,7 @@ export function Topbar({ onOpenCommand }: TopbarProps) {
             <UserCheck className="w-4 h-4" />
           </div>
           <div className="hidden md:flex flex-col text-left">
-            <span className="text-xs font-semibold text-foreground">Athelu Admin</span>
+            <span className="text-xs font-semibold text-foreground">AProject Admin</span>
             <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
               OWNER / GENERAL MANAGER
             </span>

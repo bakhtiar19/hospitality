@@ -197,7 +197,7 @@ export default function SettingsPage() {
                   <label className="text-xs text-muted-foreground font-medium">Hotel Property Name</label>
                   <input
                     type="text"
-                    defaultValue="Hotel Winotosastro by Athelu"
+                    defaultValue="Hotel Winotosastro AProject"
                     className="w-full mt-1 px-3 py-2 bg-muted/30 border border-border rounded-lg font-medium"
                     readOnly
                   />

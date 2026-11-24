@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs';
 const prisma = new PrismaClient();
 
 export async function seed() {
-  console.log('--- Starting Seed for Hotel Winotosastro by Athelu (Surakarta) ---');
+  console.log('--- Starting Seed for Hotel Winotosastro AProject (Surakarta) ---');
 
   // 1. Create Property
   const property = await prisma.property.upsert({
@@ -12,7 +12,7 @@ export async function seed() {
     update: {},
     create: {
       code: 'WINOTOSASTRO-SOLO',
-      name: 'Hotel Winotosastro by Athelu',
+      name: 'Hotel Winotosastro AProject',
       city: 'Surakarta (Solo)',
       address: 'Jl. Brigjend Slamet Riyadi No. 250, Surakarta, Jawa Tengah 57141',
       timezone: 'Asia/Jakarta',
@@ -167,7 +167,7 @@ export async function seed() {
       propertyId: property.id,
       email: 'owner@winotosastro.com',
       passwordHash,
-      fullName: 'Athelu Owner',
+      fullName: 'AProject Owner',
       phone: '+6281234567890',
       isActive: true,
     },
@@ -365,7 +365,7 @@ export async function seed() {
   });
   console.log('[Seed] Agoda Sandbox Channel Account configured');
 
-  console.log('--- Seed Completed Successfully for Hotel Winotosastro by Athelu ---');
+  console.log('--- Seed Completed Successfully for Hotel Winotosastro AProject ---');
 }
 
 seed()

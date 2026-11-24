@@ -25,6 +25,7 @@ import {
   Phone,
   ShieldCheck,
   AlertTriangle,
+  Printer,
 } from 'lucide-react';
 import { useI18n } from '../../../providers/intl-provider';
 import { formatCurrency } from '../../../lib/utils';
@@ -71,6 +72,8 @@ export default function FrontOfficePage() {
 
   // Check-Out Modal State
   const [checkOutModal, setCheckOutModal] = useState<TapeChartBooking | null>(null);
+  const [settleMethod, setSettleMethod] = useState<'EDC' | 'QRIS' | 'CASH'>('EDC');
+  const [printedFolioModal, setPrintedFolioModal] = useState<TapeChartBooking | null>(null);
 
   // Fast Walk-In Modal State
   const [walkInModalOpen, setWalkInModalOpen] = useState(false);
@@ -99,27 +102,39 @@ export default function FrontOfficePage() {
     setAllBookings(updated);
     saveStoredBookings(updated);
     setToastMessage(
-      `Check-In Berhasil! Tamu ${checkInModal.guestName} ditempatkan di Kamar ${checkInRoom} (KTP: ${guestIdNum}). Tamu kini berstatus IN-HOUSE dan terlihat di Tape Chart.`
+      `Check-In Berhasil! Tamu ${checkInModal.guestName} ditempatkan di Kamar ${checkInRoom} (KTP: ${guestIdNum}). Nota & Tanda Terima siap dicetak.`
     );
+    setPrintedFolioModal({
+      ...checkInModal,
+      roomNumber: checkInRoom,
+      status: 'IN_HOUSE',
+      idNumber: guestIdNum,
+    });
     setCheckInModal(null);
   };
 
   // Handler: Confirm Check-Out
   const handleConfirmCheckOut = () => {
     if (!checkOutModal) return;
+    const isEarly = checkOutModal.checkOutDate > today;
     const updated = allBookings.map((b) =>
       b.id === checkOutModal.id
         ? {
             ...b,
             status: 'CHECKED_OUT' as const,
+            balance: 0, // Tagihan lunas / zero balance
+            checkOutDate: isEarly ? today : b.checkOutDate,
           }
         : b
     );
     setAllBookings(updated);
     saveStoredBookings(updated);
     setToastMessage(
-      `Check-Out Selesai! Tamu ${checkOutModal.guestName} (Kamar ${checkOutModal.roomNumber}) telah selesai menginap. Saldo tagihan lunas Rp 0. Kamar ditandai DIRTY untuk Housekeeping.`
+      isEarly
+        ? `Early Check-Out Berhasil! Tamu ${checkOutModal.guestName} (Kamar ${checkOutModal.roomNumber}) telah check-out lebih awal pada hari ini (${today}). Sisa malam dibebaskan di Tape Chart & kamar ditandai DIRTY untuk Housekeeping.`
+        : `Check-Out Selesai! Tamu ${checkOutModal.guestName} (Kamar ${checkOutModal.roomNumber}) telah selesai menginap. Saldo tagihan lunas Rp 0. Kamar ditandai DIRTY untuk Housekeeping.`
     );
+    setPrintedFolioModal({ ...checkOutModal, balance: 0, status: 'CHECKED_OUT' });
     setCheckOutModal(null);
   };
 
@@ -146,10 +161,11 @@ export default function FrontOfficePage() {
     setAllBookings(updated);
     saveStoredBookings(updated);
     setToastMessage(
-      `Tamu Walk-In ${newWalkIn.guestName} langsung Check-In ke Kamar ${newWalkIn.roomNumber}! Data otomatis tersinkron ke Tape Chart.`
+      `Tamu Walk-In ${newWalkIn.guestName} langsung Check-In ke Kamar ${newWalkIn.roomNumber}! Nota Pembayaran siap dicetak.`
     );
     setWalkInModalOpen(false);
     setWalkInName('');
+    setPrintedFolioModal(newWalkIn);
   };
 
   const handleRunNightAudit = () => {
@@ -371,18 +387,27 @@ export default function FrontOfficePage() {
                         {formatCurrency(arr.totalAmount)}
                       </td>
                       <td className="px-4 py-3.5 text-right">
-                        <button
-                          onClick={() => {
-                            setCheckInModal(arr);
-                            if (arr.roomNumber && arr.roomNumber !== 'UNASSIGNED') {
-                              setCheckInRoom(arr.roomNumber);
-                            }
-                          }}
-                          className="px-3.5 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 shadow-xs transition-colors flex items-center gap-1.5 ml-auto"
-                        >
-                          <LogIn className="w-3.5 h-3.5" />
-                          Proses Check In
-                        </button>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            onClick={() => setPrintedFolioModal(arr)}
+                            className="p-1.5 text-xs font-bold rounded-lg bg-card border border-border hover:bg-muted text-foreground shadow-2xs transition-colors"
+                            title="Cetak Bukti Reservasi / Nota Datang Langsung"
+                          >
+                            <Printer className="w-3.5 h-3.5 text-primary" />
+                          </button>
+                          <button
+                            onClick={() => {
+                              setCheckInModal(arr);
+                              if (arr.roomNumber && arr.roomNumber !== 'UNASSIGNED') {
+                                setCheckInRoom(arr.roomNumber);
+                              }
+                            }}
+                            className="px-3.5 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 shadow-xs transition-colors flex items-center gap-1.5"
+                          >
+                            <LogIn className="w-3.5 h-3.5" />
+                            Proses Check In
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -426,6 +451,7 @@ export default function FrontOfficePage() {
                     <th className="px-4 py-3">Jadwal Menginap</th>
                     <th className="px-4 py-3">Saldo Tagihan</th>
                     <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3 text-right">Aksi</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
@@ -448,6 +474,11 @@ export default function FrontOfficePage() {
                       </td>
                       <td className="px-4 py-3.5 text-muted-foreground">
                         {inh.checkInDate} s/d {inh.checkOutDate}
+                        {inh.checkOutDate > today && (
+                          <span className="ml-1.5 text-[10px] text-amber-600 bg-amber-500/10 px-1.5 py-0.2 rounded font-semibold">
+                            Bisa Early CO
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-3.5 font-mono font-bold">
                         {(inh.balance ?? 0) > 0 ? (
@@ -460,6 +491,29 @@ export default function FrontOfficePage() {
                         <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-600 border border-blue-500/20">
                           🛌 IN-HOUSE
                         </span>
+                      </td>
+                      <td className="px-4 py-3.5 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            onClick={() => setPrintedFolioModal(inh)}
+                            className="p-1.5 text-xs font-bold rounded-lg bg-card border border-border hover:bg-muted text-foreground shadow-2xs transition-colors"
+                            title="Cetak Nota / Tanda Terima Pembayaran"
+                          >
+                            <Printer className="w-3.5 h-3.5 text-primary" />
+                          </button>
+                          <button
+                            onClick={() => setCheckOutModal(inh)}
+                            className={`px-3 py-1.5 text-xs font-bold rounded-lg shadow-xs transition-colors flex items-center gap-1.5 ${
+                              inh.checkOutDate > today
+                                ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                                : 'bg-slate-700 hover:bg-slate-800 text-white'
+                            }`}
+                            title={inh.checkOutDate > today ? `Check-Out lebih awal dari jadwal ${inh.checkOutDate}` : 'Check-Out kepulangan'}
+                          >
+                            <LogOut className="w-3.5 h-3.5" />
+                            {inh.checkOutDate > today ? 'Early Check-Out' : 'Check-Out'}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -692,12 +746,74 @@ export default function FrontOfficePage() {
               <div className="font-bold text-sm text-foreground">{checkOutModal.guestName}</div>
               <div className="text-muted-foreground">Kamar {checkOutModal.roomNumber} ({checkOutModal.roomType})</div>
               <div className="text-muted-foreground font-mono">{checkOutModal.bookingNumber}</div>
+              <div className="text-muted-foreground text-[11px]">
+                Jadwal Reservasi: {checkOutModal.checkInDate} s/d {checkOutModal.checkOutDate}
+              </div>
             </div>
 
-            <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl flex items-center justify-between">
-              <span className="font-semibold text-emerald-700 dark:text-emerald-400">Status Saldo Folio:</span>
-              <span className="font-mono font-bold text-emerald-700 dark:text-emerald-400">Rp 0 (Lunas / Zero-Balance)</span>
-            </div>
+            {checkOutModal.checkOutDate > today && (
+              <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl space-y-1">
+                <div className="flex items-center gap-1.5 text-amber-700 dark:text-amber-400 font-bold">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>Check-Out Lebih Awal (Early Departure)</span>
+                </div>
+                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                  Jadwal kepulangan awal tamu adalah <strong>{checkOutModal.checkOutDate}</strong>. Dengan memproses Check-Out hari ini (<strong>{today}</strong>), tanggal kepulangan disesuaikan ke hari ini dan slot kamar malam berikutnya langsung dilepas kembali di Tape Chart & Agoda Channel Manager.
+                </p>
+              </div>
+            )}
+
+            {(checkOutModal.balance ?? 0) > 0 ? (
+              <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl space-y-2">
+                <div className="flex items-center justify-between text-rose-700 dark:text-rose-400 font-bold">
+                  <span>Tagihan Belum Lunas:</span>
+                  <span className="font-mono text-sm">{formatCurrency(checkOutModal.balance!)}</span>
+                </div>
+                <div className="text-[11px] text-muted-foreground">Pilih metode pelunasan kasir:</div>
+                <div className="grid grid-cols-3 gap-2 text-center font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setSettleMethod('EDC')}
+                    className={`py-1.5 rounded-lg border text-[11px] transition-all ${
+                      settleMethod === 'EDC'
+                        ? 'border-primary bg-primary text-white'
+                        : 'border-border bg-card text-foreground hover:bg-muted'
+                    }`}
+                  >
+                    EDC Kartu
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSettleMethod('QRIS')}
+                    className={`py-1.5 rounded-lg border text-[11px] transition-all ${
+                      settleMethod === 'QRIS'
+                        ? 'border-primary bg-primary text-white'
+                        : 'border-border bg-card text-foreground hover:bg-muted'
+                    }`}
+                  >
+                    QRIS
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSettleMethod('CASH')}
+                    className={`py-1.5 rounded-lg border text-[11px] transition-all ${
+                      settleMethod === 'CASH'
+                        ? 'border-primary bg-primary text-white'
+                        : 'border-border bg-card text-foreground hover:bg-muted'
+                    }`}
+                  >
+                    Tunai (Cash)
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl flex items-center justify-between">
+                <span className="font-semibold text-emerald-700 dark:text-emerald-400">Status Saldo Folio:</span>
+                <span className="font-mono font-bold text-emerald-700 dark:text-emerald-400">
+                  Rp 0 (Lunas / Zero-Balance)
+                </span>
+              </div>
+            )}
 
             <p className="text-muted-foreground text-[11px]">
               Menekan konfirmasi akan mengakhiri masa tinggal tamu, mengembalikan kunci kamar fisik, dan menandai Kamar {checkOutModal.roomNumber} sebagai <strong>DIRTY (Perlu Pembersihan)</strong> untuk tim Housekeeping.
@@ -712,9 +828,13 @@ export default function FrontOfficePage() {
               </button>
               <button
                 onClick={handleConfirmCheckOut}
-                className="flex-1 px-4 py-2 bg-slate-700 text-white rounded-lg font-bold shadow-xs hover:bg-slate-800 transition-colors"
+                className={`flex-1 px-4 py-2 text-white rounded-lg font-bold shadow-xs transition-colors ${
+                  checkOutModal.checkOutDate > today
+                    ? 'bg-amber-600 hover:bg-amber-700'
+                    : 'bg-slate-700 hover:bg-slate-800'
+                }`}
               >
-                Konfirmasi Selesai Check-Out
+                {checkOutModal.checkOutDate > today ? 'Konfirmasi Early Check-Out' : 'Konfirmasi Selesai Check-Out'}
               </button>
             </div>
           </div>
@@ -797,6 +917,103 @@ export default function FrontOfficePage() {
                 className="flex-1 px-4 py-2 bg-primary text-white rounded-lg font-bold shadow-xs hover:bg-primary/90 disabled:opacity-50 transition-colors"
               >
                 Check-In & Serahkan Kunci
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Official Receipt / Folio Modal after Check-Out */}
+      {printedFolioModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-lg bg-card border border-border rounded-2xl p-6 shadow-2xl space-y-4 text-xs animate-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div className="flex items-center gap-2">
+                <Receipt className="w-4 h-4 text-emerald-600" />
+                <h3 className="text-sm font-bold text-foreground">
+                  Nota Pelunasan / Guest Folio Resmi
+                </h3>
+              </div>
+              <button
+                onClick={() => setPrintedFolioModal(null)}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Hotel Letterhead & Invoice Number */}
+            <div className="p-4 bg-muted/20 border border-border rounded-xl space-y-3">
+              <div className="flex justify-between items-start border-b border-border pb-2.5">
+                <div>
+                  <h4 className="font-extrabold text-sm text-foreground">Hotel Winotosastro AProject</h4>
+                  <p className="text-[11px] text-muted-foreground">Jl. Brigjend Slamet Riyadi, Surakarta, Jawa Tengah</p>
+                  <p className="text-[10px] text-muted-foreground font-mono">NPWPD: 33.72.01.284.910-001 (Bapenda Solo)</p>
+                </div>
+                <div className="text-right">
+                  <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-600 font-bold text-[10px] border border-emerald-500/20">
+                    LUNAS (PAID)
+                  </span>
+                  <div className="font-mono font-bold text-xs mt-1 text-primary">
+                    INV-{printedFolioModal.bookingNumber}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    Tanggal: {today}
+                  </div>
+                </div>
+              </div>
+
+              {/* Guest & Room Details */}
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div>
+                  <span className="text-[10px] text-muted-foreground uppercase font-bold block">Tamu (Billed To)</span>
+                  <div className="font-bold text-foreground">{printedFolioModal.guestName}</div>
+                  <div className="text-muted-foreground font-mono text-[11px]">{printedFolioModal.phone || '-'}</div>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] text-muted-foreground uppercase font-bold block">Kamar & Durasi</span>
+                  <div className="font-bold text-foreground">Kamar {printedFolioModal.roomNumber} ({printedFolioModal.roomType})</div>
+                  <div className="text-muted-foreground text-[11px]">
+                    {printedFolioModal.checkInDate} s/d {printedFolioModal.checkOutDate}
+                  </div>
+                </div>
+              </div>
+
+              {/* Breakdown */}
+              <div className="border-t border-border pt-2 space-y-1.5 text-xs">
+                <div className="flex justify-between text-muted-foreground">
+                  <span>Sewa Kamar ({printedFolioModal.ratePlan}):</span>
+                  <span className="font-mono text-foreground">{formatCurrency(printedFolioModal.totalAmount)}</span>
+                </div>
+                <div className="flex justify-between text-muted-foreground text-[11px]">
+                  <span>Termasuk PBJT Hotel 10% & Service 10%:</span>
+                  <span className="font-mono text-emerald-600 font-semibold">Tercakup</span>
+                </div>
+                <div className="border-t border-border pt-1.5 flex justify-between font-bold text-sm">
+                  <span className="text-foreground">Total Tagihan Lunas:</span>
+                  <span className="font-mono text-emerald-600">{formatCurrency(printedFolioModal.totalAmount)}</span>
+                </div>
+                <div className="flex justify-between text-muted-foreground text-[11px]">
+                  <span>Sisa Saldo (Balance Due):</span>
+                  <span className="font-mono font-bold text-emerald-600">Rp 0 (Lunas 100%)</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                onClick={() => window.print()}
+                className="flex-1 px-4 py-2 bg-primary text-white rounded-lg font-bold shadow-xs hover:bg-primary/90 transition-colors flex items-center justify-center gap-1.5"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                Cetak Nota / Unduh PDF
+              </button>
+              <button
+                onClick={() => setPrintedFolioModal(null)}
+                className="px-4 py-2 bg-muted hover:bg-muted/80 rounded-lg font-semibold transition-colors text-foreground"
+              >
+                Tutup
               </button>
             </div>
           </div>

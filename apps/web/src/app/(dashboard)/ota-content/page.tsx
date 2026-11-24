@@ -29,10 +29,10 @@ export default function OtaContentPage() {
 
   // Content state
   const [descId, setDescId] = useState(
-    'Hotel Winotosastro by Athelu adalah akomodasi bintang 3 modern yang terletak di jantung Kota Surakarta (Solo), Jawa Tengah. Menawarkan 40 kamar berdesain elegan, akses Wi-Fi berkecepatan tinggi gratis, layanan meja depan 24 jam, serta restoran yang menyajikan hidangan otentik khas Solo dan internasional. Terletak strategis hanya beberapa menit dari Keraton Surakarta Hadiningrat, Pasar Klewer, dan Stasiun Solo Balapan.',
+    'Hotel Winotosastro AProject adalah akomodasi bintang 3 modern yang terletak di jantung Kota Surakarta (Solo), Jawa Tengah. Menawarkan 40 kamar berdesain elegan, akses Wi-Fi berkecepatan tinggi gratis, layanan meja depan 24 jam, serta restoran yang menyajikan hidangan otentik khas Solo dan internasional. Terletak strategis hanya beberapa menit dari Keraton Surakarta Hadiningrat, Pasar Klewer, dan Stasiun Solo Balapan.',
   );
   const [descEn, setDescEn] = useState(
-    'Hotel Winotosastro by Athelu is a modern boutique hotel located in the heart of Surakarta (Solo), Central Java. Featuring 40 elegantly appointed rooms, complimentary high-speed Wi-Fi, 24-hour reception, and an on-site restaurant serving authentic Javanese and international specialties. Strategically positioned minutes away from the Royal Palace (Keraton Surakarta), Klewer Traditional Batik Market, and Solo Balapan Station.',
+    'Hotel Winotosastro AProject is a modern boutique hotel located in the heart of Surakarta (Solo), Central Java. Featuring 40 elegantly appointed rooms, complimentary high-speed Wi-Fi, 24-hour reception, and an on-site restaurant serving authentic Javanese and international specialties. Strategically positioned minutes away from the Royal Palace (Keraton Surakarta), Klewer Traditional Batik Market, and Solo Balapan Station.',
   );
 
   const [policies, setPolicies] = useState({
@@ -59,7 +59,7 @@ export default function OtaContentPage() {
     { id: 'p3', tag: 'Deluxe King', caption: 'Deluxe King Room with Balcony' },
     { id: 'p4', tag: 'Superior Twin', caption: 'Superior Twin Room' },
     { id: 'p5', tag: 'Executive Suite', caption: 'Executive Suite Living Area & City View' },
-    { id: 'p6', tag: 'Dining', caption: 'Athelu Signature Bistro' },
+    { id: 'p6', tag: 'Dining', caption: 'AProject Signature Bistro' },
   ]);
 
   const handleSyncContent = () => {

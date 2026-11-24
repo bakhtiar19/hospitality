@@ -1,7 +1,7 @@
 # Hotel Winotosastro PMS & Channel Manager
 
 > Production-Grade Hotel Property Management System (PMS) & Channel Manager for the Indonesian Hospitality Market.  
-> Target Property: **Hotel Winotosastro by Athelu, Surakarta (Solo), Central Java**.
+> Target Property: **Hotel Winotosastro AProject, Surakarta (Solo), Central Java**.
 
 ---
 
@@ -80,4 +80,4 @@ For deploying the Next.js web application (`apps/web`) to Netlify:
 ---
 
 ## 📄 License
-Private & Confidential — Hotel Winotosastro by Athelu.
+Private & Confidential — Hotel Winotosastro AProject.
