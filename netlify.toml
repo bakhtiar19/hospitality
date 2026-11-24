@@ -1,9 +1,10 @@
 [build]
-  command = "pnpm --filter @hospitality/shared-types build && pnpm --filter @hospitality/web build"
+  command = "pnpm --filter @hospitality/web build"
   publish = "apps/web/out"
 
 [build.environment]
   NODE_VERSION = "22"
+  NODE_ENV = "development"
   NETLIFY_NEXT_PLUGIN_SKIP = "true"
 
 [[redirects]]
