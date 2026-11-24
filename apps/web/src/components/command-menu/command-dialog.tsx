@@ -22,12 +22,12 @@ interface CommandDialogProps {
 
 const commands = [
   { label: 'Go to Dashboard', icon: LayoutDashboard, href: '/dashboard', category: 'Navigation' },
-  { label: 'View Tape Chart / Calendar', icon: CalendarCheck, href: '/bookings', category: 'Bookings' },
+  { label: 'Front Desk & Reservasi (Kalender & List)', icon: CalendarCheck, href: '/front-office', category: 'Operations' },
+  { label: 'Finance & OTA Settlement', icon: CreditCard, href: '/finance', category: 'Finance' },
   { label: 'Channel Manager & Agoda Sync', icon: Share2, href: '/channels', category: 'Channel Manager' },
   { label: 'Housekeeping Board', icon: Sparkles, href: '/housekeeping', category: 'Operations' },
-  { label: 'Property & Tax Settings', icon: Settings, href: '/settings', category: 'Settings' },
+  { label: 'Property Branding & Logo Settings', icon: Settings, href: '/settings', category: 'Settings' },
   { label: 'Guest CRM', icon: Users, href: '/crm', category: 'CRM' },
-  { label: 'Payments & Billing', icon: CreditCard, href: '/payments', category: 'Finance' },
   { label: 'Direct Booking Engine', icon: Building, href: '/book/hotel-winotosastro', category: 'Public' },
 ];
 

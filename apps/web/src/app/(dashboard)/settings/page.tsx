@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Building2,
   Percent,
@@ -17,13 +17,75 @@ import {
   ShieldAlert,
   Sparkles,
   X,
+  Upload,
+  Image as ImageIcon,
+  Trash2,
+  Save,
+  Printer,
+  Phone,
+  Mail,
+  FileCheck,
 } from 'lucide-react';
 import { useI18n } from '../../../providers/intl-provider';
-import { formatCurrency } from '../../../lib/utils';
+import { formatCurrency, formatThousands, parseThousands } from '../../../lib/utils';
+import {
+  getHotelSettings,
+  saveHotelSettings,
+  HotelSettings,
+} from '../../../lib/settings-store';
 
 export default function SettingsPage() {
   const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<'property' | 'taxes' | 'roomTypes' | 'rooms' | 'ratePlans'>('property');
+
+  // Hotel Branding & Settings State
+  const [hotelSettings, setHotelSettings] = useState<HotelSettings>(getHotelSettings());
+  const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    setHotelSettings(getHotelSettings());
+    const handler = () => setHotelSettings(getHotelSettings());
+    window.addEventListener('pms_settings_updated', handler);
+    return () => window.removeEventListener('pms_settings_updated', handler);
+  }, []);
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      alert('Mohon pilih file gambar (PNG, JPG, SVG, WebP).');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result as string;
+      const updated = saveHotelSettings({ logoUrl: base64 });
+      setHotelSettings(updated);
+      setSaveSuccessMsg('Logo hotel berhasil diunggah! Logo ini sekarang otomatis digunakan untuk setiap print out nota/folio.');
+      setTimeout(() => setSaveSuccessMsg(null), 5000);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveLogo = () => {
+    if (confirm('Apakah Anda yakin ingin menghapus logo kustom dan kembali ke default?')) {
+      const updated = saveHotelSettings({ logoUrl: '' });
+      setHotelSettings(updated);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      setSaveSuccessMsg('Logo kustom berhasil dihapus.');
+      setTimeout(() => setSaveSuccessMsg(null), 4000);
+    }
+  };
+
+  const handleSavePropertyInfo = (e: React.FormEvent) => {
+    e.preventDefault();
+    saveHotelSettings(hotelSettings);
+    setSaveSuccessMsg('Informasi profil hotel & branding berhasil disimpan!');
+    setTimeout(() => setSaveSuccessMsg(null), 4000);
+  };
 
   // Room Types State
   const [roomTypes, setRoomTypes] = useState([
@@ -186,60 +248,215 @@ export default function SettingsPage() {
         </button>
       </div>
 
-      {/* Tab 1: Property Profile */}
+      {/* Success Notification */}
+      {saveSuccessMsg && (
+        <div className="flex items-center gap-3 p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-700 dark:text-emerald-400 text-sm font-semibold animate-in fade-in slide-in-from-top-2">
+          <CheckCircle2 className="w-5 h-5 flex-shrink-0 text-emerald-600" />
+          <span className="flex-1">{saveSuccessMsg}</span>
+          <button onClick={() => setSaveSuccessMsg(null)} className="p-1 hover:bg-emerald-500/20 rounded-lg">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Tab 1: Property Profile & Logo Branding */}
       {activeTab === 'property' && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="md:col-span-2 space-y-6">
-            <div className="p-6 bg-card border border-border rounded-xl shadow-xs space-y-4">
-              <h3 className="text-base font-bold text-foreground">General Hotel Information</h3>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 space-y-6">
+            {/* Logo Upload & Print Out Branding Card */}
+            <div className="p-6 bg-card border border-border rounded-xl shadow-xs space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-4">
+                <div>
+                  <h3 className="text-base font-bold text-foreground flex items-center gap-2">
+                    <ImageIcon className="w-5 h-5 text-primary" />
+                    Logo Hotel (Kop Surat & Print Out Nota / Folio)
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Upload logo resmi hotel Anda. Logo ini otomatis dicantumkan di setiap cetak nota pelunasan, receipt tamu, dan invoice resmi.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    accept="image/*"
+                    onChange={handleLogoUpload}
+                    className="hidden"
+                    id="logo-file-input"
+                  />
+                  <label
+                    htmlFor="logo-file-input"
+                    className="flex items-center gap-2 px-4 py-2 bg-primary text-white text-xs font-bold rounded-lg shadow-xs hover:bg-primary/90 cursor-pointer transition-colors"
+                  >
+                    <Upload className="w-4 h-4" />
+                    {hotelSettings.logoUrl ? 'Ganti Logo' : 'Unggah Logo Baru'}
+                  </label>
+                  {hotelSettings.logoUrl && (
+                    <button
+                      type="button"
+                      onClick={handleRemoveLogo}
+                      className="flex items-center gap-1.5 px-3 py-2 bg-destructive/10 text-destructive text-xs font-bold rounded-lg hover:bg-destructive/20 transition-colors"
+                      title="Hapus logo kustom"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Hapus
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Logo Preview & Print Simulation */}
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-center">
+                <div className="sm:col-span-4 flex flex-col items-center justify-center p-4 bg-muted/30 border border-dashed border-border rounded-xl min-h-[140px] text-center">
+                  {hotelSettings.logoUrl ? (
+                    <div className="space-y-2">
+                      <img
+                        src={hotelSettings.logoUrl}
+                        alt="Logo Hotel"
+                        className="max-h-24 max-w-full object-contain mx-auto rounded shadow-xs bg-white p-2"
+                      />
+                      <span className="text-[11px] font-semibold text-emerald-600 block">✓ Logo Aktif</span>
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5 text-muted-foreground">
+                      <div className="w-12 h-12 rounded-xl bg-primary/10 text-primary flex items-center justify-center mx-auto">
+                        <Building2 className="w-6 h-6" />
+                      </div>
+                      <span className="text-xs font-semibold block text-foreground">Belum ada logo kustom</span>
+                      <span className="text-[10px] text-muted-foreground block">Format: PNG, JPG, SVG, WebP (Maks 3MB)</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Printout Header Simulation */}
+                <div className="sm:col-span-8 p-4 bg-card border border-border rounded-xl space-y-2 text-xs">
+                  <div className="flex items-center justify-between text-[11px] font-bold text-muted-foreground pb-1 border-b border-border">
+                    <span className="flex items-center gap-1.5 text-primary">
+                      <Printer className="w-3.5 h-3.5" />
+                      Simulasi Kop Surat Cetak (Print Out Header)
+                    </span>
+                    <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-mono">
+                      PREVIEW FOLIO
+                    </span>
+                  </div>
+                  <div className="flex items-start justify-between gap-3 pt-1">
+                    <div className="space-y-0.5">
+                      <div className="font-extrabold text-sm text-foreground">
+                        {hotelSettings.hotelName || 'Hotel Winotosastro AProject'}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {hotelSettings.address || 'Jl. Brigjend Slamet Riyadi No. 250, Surakarta'}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground font-mono">
+                        NPWPD: {hotelSettings.npwpd || '33.72.01.284.910-001'} | Telp: {hotelSettings.phone || '+62 271 718899'}
+                      </div>
+                    </div>
+                    {hotelSettings.logoUrl ? (
+                      <img
+                        src={hotelSettings.logoUrl}
+                        alt="Logo Preview"
+                        className="h-10 w-auto max-w-[120px] object-contain flex-shrink-0 bg-white p-1 rounded border border-border/50"
+                      />
+                    ) : (
+                      <div className="w-10 h-10 rounded-lg bg-primary/10 text-primary flex items-center justify-center flex-shrink-0 font-bold text-xs">
+                        LOGO
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* General Hotel Information Form */}
+            <form onSubmit={handleSavePropertyInfo} className="p-6 bg-card border border-border rounded-xl shadow-xs space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-bold text-foreground">General Hotel & Buyer Information</h3>
+                <span className="text-xs text-muted-foreground">Dapat disesuaikan oleh pembeli aplikasi</span>
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
                 <div>
                   <label className="text-xs text-muted-foreground font-medium">Hotel Property Name</label>
                   <input
                     type="text"
-                    defaultValue="Hotel Winotosastro AProject"
-                    className="w-full mt-1 px-3 py-2 bg-muted/30 border border-border rounded-lg font-medium"
-                    readOnly
+                    value={hotelSettings.hotelName}
+                    onChange={(e) => setHotelSettings({ ...hotelSettings, hotelName: e.target.value })}
+                    className="w-full mt-1 px-3 py-2 bg-background border border-border rounded-lg font-medium focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
+                    placeholder="Contoh: Hotel Grand Sahid Surakarta"
+                    required
                   />
                 </div>
                 <div>
                   <label className="text-xs text-muted-foreground font-medium">Property Code</label>
                   <input
                     type="text"
-                    defaultValue="WINOTOSASTRO-SOLO"
-                    className="w-full mt-1 px-3 py-2 bg-muted/30 border border-border rounded-lg font-mono text-xs"
-                    readOnly
+                    value={hotelSettings.propertyCode}
+                    onChange={(e) => setHotelSettings({ ...hotelSettings, propertyCode: e.target.value.toUpperCase() })}
+                    className="w-full mt-1 px-3 py-2 bg-background border border-border rounded-lg font-mono text-xs focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
+                    required
                   />
                 </div>
                 <div className="sm:col-span-2">
-                  <label className="text-xs text-muted-foreground font-medium">Street Address</label>
+                  <label className="text-xs text-muted-foreground font-medium">Street Address (Untuk Kop Surat)</label>
                   <input
                     type="text"
-                    defaultValue="Jl. Brigjend Slamet Riyadi No. 250, Surakarta, Jawa Tengah 57141"
-                    className="w-full mt-1 px-3 py-2 bg-muted/30 border border-border rounded-lg"
-                    readOnly
+                    value={hotelSettings.address}
+                    onChange={(e) => setHotelSettings({ ...hotelSettings, address: e.target.value })}
+                    className="w-full mt-1 px-3 py-2 bg-background border border-border rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
+                    required
                   />
                 </div>
                 <div>
                   <label className="text-xs text-muted-foreground font-medium">City / Regency</label>
                   <input
                     type="text"
-                    defaultValue="Surakarta (Solo)"
-                    className="w-full mt-1 px-3 py-2 bg-muted/30 border border-border rounded-lg"
-                    readOnly
+                    value={hotelSettings.city}
+                    onChange={(e) => setHotelSettings({ ...hotelSettings, city: e.target.value })}
+                    className="w-full mt-1 px-3 py-2 bg-background border border-border rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
+                    required
                   />
                 </div>
                 <div>
                   <label className="text-xs text-muted-foreground font-medium">Country</label>
                   <input
                     type="text"
-                    defaultValue="Indonesia (ID)"
-                    className="w-full mt-1 px-3 py-2 bg-muted/30 border border-border rounded-lg"
-                    readOnly
+                    value={hotelSettings.country}
+                    onChange={(e) => setHotelSettings({ ...hotelSettings, country: e.target.value })}
+                    className="w-full mt-1 px-3 py-2 bg-background border border-border rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground font-medium">Nomor NPWPD (Pajak Daerah Hotel)</label>
+                  <input
+                    type="text"
+                    value={hotelSettings.npwpd}
+                    onChange={(e) => setHotelSettings({ ...hotelSettings, npwpd: e.target.value })}
+                    className="w-full mt-1 px-3 py-2 bg-background border border-border rounded-lg font-mono text-xs focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
+                    placeholder="33.72.01.284.910-001"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground font-medium">Telepon Kontak Resmi</label>
+                  <input
+                    type="text"
+                    value={hotelSettings.phone}
+                    onChange={(e) => setHotelSettings({ ...hotelSettings, phone: e.target.value })}
+                    className="w-full mt-1 px-3 py-2 bg-background border border-border rounded-lg font-mono text-xs focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
+                    placeholder="+62 271 718899"
                   />
                 </div>
               </div>
-            </div>
+
+              <div className="flex justify-end pt-2">
+                <button
+                  type="submit"
+                  className="flex items-center gap-2 px-5 py-2.5 bg-primary text-white font-bold text-xs rounded-xl shadow-xs hover:bg-primary/90 transition-colors"
+                >
+                  <Save className="w-4 h-4" />
+                  Simpan Profil & Branding Hotel
+                </button>
+              </div>
+            </form>
 
             <div className="p-6 bg-card border border-border rounded-xl shadow-xs space-y-4">
               <h3 className="text-base font-bold text-foreground">Operational Times & Audit Policies</h3>
@@ -248,14 +465,14 @@ export default function SettingsPage() {
                   <label className="text-xs text-muted-foreground font-medium">Check-In Standard Time</label>
                   <div className="flex items-center gap-2 mt-1 px-3 py-2 bg-muted/30 border border-border rounded-lg font-semibold">
                     <Clock className="w-4 h-4 text-primary" />
-                    <span>14:00 WIB</span>
+                    <span>{hotelSettings.checkInTime || '14:00 WIB'}</span>
                   </div>
                 </div>
                 <div>
                   <label className="text-xs text-muted-foreground font-medium">Check-Out Standard Time</label>
                   <div className="flex items-center gap-2 mt-1 px-3 py-2 bg-muted/30 border border-border rounded-lg font-semibold">
                     <Clock className="w-4 h-4 text-primary" />
-                    <span>12:00 WIB</span>
+                    <span>{hotelSettings.checkOutTime || '12:00 WIB'}</span>
                   </div>
                 </div>
                 <div>
@@ -381,13 +598,16 @@ export default function SettingsPage() {
               </div>
               <div className="space-y-3 text-xs">
                 <div>
-                  <label className="text-[11px] font-semibold text-muted-foreground">Sample Base Room Rate</label>
-                  <input
-                    type="number"
-                    value={calcBaseRate}
-                    onChange={(e) => setCalcBaseRate(Number(e.target.value) || 0)}
-                    className="w-full mt-1 px-3 py-1.5 bg-muted/40 border border-border rounded-lg font-bold font-mono text-sm"
-                  />
+                  <label className="text-[11px] font-semibold text-muted-foreground">Sample Base Room Rate (Rp)</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-muted-foreground">Rp</span>
+                    <input
+                      type="text"
+                      value={formatThousands(calcBaseRate)}
+                      onChange={(e) => setCalcBaseRate(parseThousands(e.target.value))}
+                      className="w-full mt-1 pl-9 pr-3 py-1.5 bg-muted/40 border border-border rounded-lg font-bold font-mono text-sm"
+                    />
+                  </div>
                 </div>
 
                 <div className="pt-2 border-t border-border space-y-2">
@@ -548,15 +768,16 @@ export default function SettingsPage() {
 
                   <div>
                     <label className="font-semibold text-muted-foreground block mb-1">Tarif Dasar per Malam (IDR) *</label>
-                    <input
-                      type="number"
-                      step="50000"
-                      min="100000"
-                      required
-                      value={newRtBaseRate}
-                      onChange={(e) => setNewRtBaseRate(Number(e.target.value))}
-                      className="w-full p-2.5 bg-muted/30 border border-border rounded-lg text-foreground font-mono font-bold"
-                    />
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-muted-foreground">Rp</span>
+                      <input
+                        type="text"
+                        required
+                        value={formatThousands(newRtBaseRate)}
+                        onChange={(e) => setNewRtBaseRate(parseThousands(e.target.value))}
+                        className="w-full pl-9 pr-2.5 py-2 bg-muted/30 border border-border rounded-lg text-foreground font-mono font-bold"
+                      />
+                    </div>
                   </div>
 
                   <div>

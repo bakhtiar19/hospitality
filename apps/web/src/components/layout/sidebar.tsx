@@ -21,6 +21,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Hotel,
+  DollarSign,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useI18n } from '../../providers/intl-provider';
@@ -36,18 +37,17 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { id: 'dashboard', nameKey: 'modules.dashboard', href: '/dashboard', icon: LayoutDashboard },
-  { id: 'settings', nameKey: 'modules.settings', href: '/settings', icon: Settings },
-  { id: 'bookings', nameKey: 'modules.bookings', href: '/bookings', icon: CalendarCheck, badge: 'Tape' },
+  { id: 'frontOffice', nameKey: 'modules.frontOffice', href: '/front-office', icon: ConciergeBell, badge: 'Kalender & List' },
   { id: 'rates', nameKey: 'modules.rates', href: '/rates', icon: TrendingUp },
   { id: 'channels', nameKey: 'modules.channels', href: '/channels', icon: Share2, badge: 'Agoda' },
-  { id: 'frontOffice', nameKey: 'modules.frontOffice', href: '/front-office', icon: ConciergeBell },
   { id: 'housekeeping', nameKey: 'modules.housekeeping', href: '/housekeeping', icon: Sparkles },
-  { id: 'backOffice', nameKey: 'modules.backOffice', href: '/back-office', icon: Receipt },
+  { id: 'finance', nameKey: 'modules.finance', href: '/finance', icon: DollarSign, badge: 'OTA Settle' },
   { id: 'bookingEngine', nameKey: 'modules.bookingEngine', href: '/book/hotel-winotosastro', icon: Globe, isExternal: true },
   { id: 'payments', nameKey: 'modules.payments', href: '/payments', icon: CreditCard },
   { id: 'crm', nameKey: 'modules.crm', href: '/crm', icon: Users },
   { id: 'otaContent', nameKey: 'modules.otaContent', href: '/ota-content', icon: ImageIcon },
   { id: 'reports', nameKey: 'modules.reports', href: '/reports', icon: BarChart3 },
+  { id: 'settings', nameKey: 'modules.settings', href: '/settings', icon: Settings },
   { id: 'account', nameKey: 'modules.account', href: '/account', icon: ShieldCheck },
 ];
 

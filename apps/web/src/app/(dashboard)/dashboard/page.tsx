@@ -174,8 +174,8 @@ export default function DashboardPage() {
             </h2>
             <HelpCircle className="w-4 h-4 text-muted-foreground hover:text-foreground cursor-pointer" />
           </div>
-          <Link href="/bookings" className="text-xs text-primary font-semibold hover:underline flex items-center gap-1">
-            Open Tape Chart <ArrowUpRight className="w-3.5 h-3.5" />
+          <Link href="/front-office" className="text-xs text-primary font-semibold hover:underline flex items-center gap-1">
+            Buka Front Desk & Tape Chart <ArrowUpRight className="w-3.5 h-3.5" />
           </Link>
         </div>
 
@@ -382,10 +382,10 @@ export default function DashboardPage() {
               <HelpCircle className="w-3.5 h-3.5 text-muted-foreground" />
             </div>
             <Link
-              href="/bookings"
+              href="/front-office"
               className="text-xs font-semibold text-primary hover:underline flex items-center gap-1"
             >
-              View Full Tape Chart <ChevronRight className="w-3.5 h-3.5" />
+              Buka Front Desk & Reservasi <ChevronRight className="w-3.5 h-3.5" />
             </Link>
           </div>
 
@@ -611,18 +611,18 @@ export default function DashboardPage() {
             </span>
             <div className="grid grid-cols-2 gap-2 text-xs">
               <Link
-                href="/bookings"
+                href="/front-office"
                 className="flex items-center gap-2 p-2 bg-muted/40 hover:bg-muted rounded-lg font-medium text-foreground transition-colors"
               >
                 <PlusCircle className="w-3.5 h-3.5 text-primary" />
-                New Booking
+                Reservasi Baru
               </Link>
               <Link
-                href="/bookings"
+                href="/front-office"
                 className="flex items-center gap-2 p-2 bg-muted/40 hover:bg-muted rounded-lg font-medium text-foreground transition-colors"
               >
                 <Calendar className="w-3.5 h-3.5 text-primary" />
-                Tape Chart
+                Tape & Operasional
               </Link>
               <Link
                 href="/channels"
