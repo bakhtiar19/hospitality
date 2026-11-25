@@ -38,6 +38,7 @@ model Property {
   auditLogs        AuditLog[]
   housekeepingTasks HousekeepingTask[]
   nightAudits      NightAudit[]
+  otaSettlements   OtaSettlement[]
 
   @@map("properties")
 }
@@ -52,6 +53,7 @@ model User {
   passwordHash String    @db.VarChar(255)
   fullName     String    @db.VarChar(150)
   phone        String?   @db.VarChar(50)
+  isSuperAdmin Boolean   @default(false)
   isActive     Boolean   @default(true)
   totpSecret   String?   @db.VarChar(100)
   refreshTokenHash String? @db.VarChar(255)
@@ -627,4 +629,35 @@ model AuditLog {
 
   @@index([propertyId, createdAt])
   @@map("audit_logs")
+}
+
+// ----------------------------------------------------
+// OTA SETTLEMENTS & RECONCILIATION
+// ----------------------------------------------------
+model OtaSettlement {
+  id                  String   @id @default(uuid()) @db.Uuid
+  propertyId          String   @db.Uuid
+  otaChannel          String   @db.VarChar(50)
+  otaBookingCode      String   @db.VarChar(80)
+  guestName           String   @db.VarChar(150)
+  roomType            String   @db.VarChar(100)
+  roomNumber          String   @db.VarChar(20)
+  checkInDate         String   @db.VarChar(20)
+  checkOutDate        String   @db.VarChar(20)
+  grossAmount         BigInt
+  commissionPercent   Int      @default(15)
+  commissionAmount    BigInt
+  netPayout           BigInt
+  payoutMethod        String   @db.VarChar(80)
+  status              String   @default("PENDING") @db.VarChar(30)
+  settledAt           String?  @db.VarChar(60)
+  settlementReference String?  @db.VarChar(100)
+  createdAt           DateTime @default(now()) @db.Timestamptz()
+  updatedAt           DateTime @updatedAt @db.Timestamptz()
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, otaBookingCode])
+  @@index([propertyId, status])
+  @@map("ota_settlements")
 }

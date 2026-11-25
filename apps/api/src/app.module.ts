@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { AuthModule } from './modules/auth/auth.module.js';
 import { PropertiesModule } from './modules/properties/properties.module.js';
 import { WebSocketModule } from './modules/websocket/websocket.module.js';
@@ -15,6 +15,8 @@ import { DashboardModule } from './modules/dashboard/dashboard.module.js';
 import { ChannelManagerModule } from './modules/channels/channel-manager.module.js';
 import { PaymentsModule } from './modules/payments/payments.module.js';
 import { CrmModule } from './modules/crm/crm.module.js';
+import { PmsModule } from './modules/pms/pms.module.js';
+import { RateLimitMiddleware, SecurityHeadersMiddleware } from './common/middleware/security.middleware.js';
 
 @Module({
   imports: [
@@ -34,6 +36,11 @@ import { CrmModule } from './modules/crm/crm.module.js';
     ChannelManagerModule,
     PaymentsModule,
     CrmModule,
+    PmsModule,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(SecurityHeadersMiddleware, RateLimitMiddleware).forRoutes('*');
+  }
+}

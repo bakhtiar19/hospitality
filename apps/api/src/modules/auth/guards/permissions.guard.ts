@@ -22,8 +22,8 @@ export class PermissionsGuard implements CanActivate {
       throw new ForbiddenException('User context missing or no permissions granted');
     }
 
-    // Owner role bypasses explicit permission check
-    if (user.role === 'OWNER') {
+    // Super Admin & Hotel Owner bypass explicit permission check
+    if (user.role === 'SUPER_ADMIN' || user.role === 'OWNER') {
       return true;
     }
 

@@ -198,7 +198,23 @@ export async function seed() {
     create: { userId: frontDeskUser.id, roleId: frontDeskRole.id },
   });
 
-  console.log('[Seed] Users seeded: owner@winotosastro.com, frontdesk@winotosastro.com');
+  // Platform Super Admin (Akses semua properti terhubung)
+  const superAdminHash = await bcrypt.hash('AdminAProject2026!', 12);
+  await prisma.user.upsert({
+    where: { email: 'superadmin@aproject.id' },
+    update: { isSuperAdmin: true, isActive: true },
+    create: {
+      propertyId: property.id,
+      email: 'superadmin@aproject.id',
+      passwordHash: superAdminHash,
+      fullName: 'AProject Super Admin',
+      phone: '+6285155177341',
+      isSuperAdmin: true,
+      isActive: true,
+    },
+  });
+
+  console.log('[Seed] Users seeded: superadmin@aproject.id, owner@winotosastro.com, frontdesk@winotosastro.com');
 
   // 5. Floors (1 to 4)
   const floorMap = new Map<number, string>();

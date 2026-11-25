@@ -1,15 +1,13 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
-  TrendingUp,
   CalendarCheck,
   DoorOpen,
   LogIn,
   LogOut,
   HelpCircle,
-  AlertTriangle,
   CheckCircle2,
   ExternalLink,
   PlusCircle,
@@ -34,41 +32,74 @@ import {
   PieChart,
   Pie,
   Cell,
-  Legend,
 } from 'recharts';
 import { useI18n } from '../../../providers/intl-provider';
+import { useAuth } from '../../../providers/auth-provider';
+import { apiRequest } from '../../../lib/api-client';
 import { formatCurrency } from '../../../lib/utils';
+import { getHotelSettings } from '../../../lib/settings-store';
 
-const PACE_DATA_7D = [
-  { date: '18 Nov', revenue: 9800000, occupancyRate: 65, adr: 680000 },
-  { date: '19 Nov', revenue: 10400000, occupancyRate: 70, adr: 700000 },
-  { date: '20 Nov', revenue: 11200000, occupancyRate: 72, adr: 710000 },
-  { date: '21 Nov', revenue: 13500000, occupancyRate: 85, adr: 750000 },
-  { date: '22 Nov', revenue: 14800000, occupancyRate: 92, adr: 780000 },
-  { date: '23 Nov', revenue: 10900000, occupancyRate: 72, adr: 710000 },
-  { date: '24 Nov', revenue: 12450000, occupancyRate: 80, adr: 720000 },
-];
-
-const PACE_DATA_30D = [
-  { date: 'Wk 1', revenue: 68000000, occupancyRate: 74, adr: 710000 },
-  { date: 'Wk 2', revenue: 74500000, occupancyRate: 78, adr: 725000 },
-  { date: 'Wk 3', revenue: 81200000, occupancyRate: 83, adr: 740000 },
-  { date: 'Wk 4', revenue: 60900000, occupancyRate: 80, adr: 730000 },
-];
-
-const CHANNEL_SHARE_DATA = [
-  { name: 'Agoda (OTA)', value: 45, count: 18, revenue: 5600000, color: '#f43f5e' },
-  { name: 'Direct Website', value: 30, count: 12, revenue: 3750000, color: '#0284c7' },
-  { name: 'Walk-In Desk', value: 15, count: 6, revenue: 1900000, color: '#8b5cf6' },
-  { name: 'Booking.com', value: 10, count: 4, revenue: 1200000, color: '#059669' },
-];
+interface AnalyticsPayload {
+  todayDate: string;
+  totalRooms: number;
+  cleanRooms: number;
+  dirtyRooms: number;
+  occupiedToday: number;
+  occupancyPercent: number;
+  arrivalsToday: number;
+  departuresToday: number;
+  inHouseCount: number;
+  revenueToday: number;
+  revenueMtd: number;
+  revenueTotal: number;
+  adr: number;
+  revpar: number;
+  pace7d: Array<{ date: string; revenue: number; occupancyRate: number; adr: number }>;
+  channelShare: Array<{ name: string; value: number; count: number; revenue: number; color: string }>;
+  recentBookings: Array<{
+    id: string;
+    bookingNumber: string;
+    guestName: string;
+    roomNumber: string;
+    roomType: string;
+    source: string;
+    status: string;
+    checkInDate: string;
+    checkOutDate: string;
+    totalAmount: number;
+  }>;
+}
 
 export default function DashboardPage() {
   const { t } = useI18n();
-  const [trendRange, setTrendRange] = useState<'7d' | '30d'>('7d');
-  const [activeTab, setActiveTab] = useState<'pace' | 'channels'>('pace');
+  const { dbSynced } = useAuth();
+  const [analytics, setAnalytics] = useState<AnalyticsPayload | null>(null);
+  const [loading, setLoading] = useState(true);
+  const settings = getHotelSettings();
 
-  const chartData = trendRange === '7d' ? PACE_DATA_7D : PACE_DATA_30D;
+  const loadAnalytics = async () => {
+    if (!dbSynced) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const data = await apiRequest<AnalyticsPayload>('/pms/analytics');
+      setAnalytics(data);
+    } catch (err) {
+      console.error('Failed to load analytics', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadAnalytics();
+  }, [dbSynced]);
+
+  const chartData = analytics?.pace7d || [];
+  const channelData = analytics?.channelShare || [];
+  const availableRooms = Math.max(0, (analytics?.totalRooms || 0) - (analytics?.occupiedToday || 0));
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
@@ -79,32 +110,32 @@ export default function DashboardPage() {
             <Sparkles className="w-4 h-4" />
           </div>
           <div>
-            <span className="font-bold">Agoda OTA Sandbox Connected:</span>{' '}
-            <span className="text-foreground/80">{t('dashboard.announcement')}</span>
+            <span className="font-bold">PostgreSQL Live Analytics ({analytics?.todayDate || 'Asia/Jakarta'}):</span>{' '}
+            <span className="text-foreground/80">
+              Seluruh KPI okupansi, ADR, RevPAR, dan reservasi di bawah dihitung real-time dari database properti Anda.
+            </span>
           </div>
         </div>
-        <Link
-          href="/channels"
+        <button
+          onClick={loadAnalytics}
           className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-primary text-white hover:bg-primary/90 transition-colors"
         >
-          Inspect Sync Logs
-          <ChevronRight className="w-3.5 h-3.5" />
-        </Link>
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+          Refresh KPI
+        </button>
       </div>
 
-      {/* 2. Revenue Summary Cards (Today / MTD / YTD with % vs prior period) */}
+      {/* 2. Revenue Summary Cards */}
       <div>
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <h2 className="text-lg font-bold text-foreground tracking-tight">
               {t('dashboard.revenueSummary')}
             </h2>
-            <div className="group relative cursor-pointer" title="Revenue figures exclude cancelled and no-show reservations. Minor unit integer precision.">
-              <HelpCircle className="w-4 h-4 text-muted-foreground hover:text-foreground" />
-            </div>
+            <HelpCircle className="w-4 h-4 text-muted-foreground" />
           </div>
           <span className="text-xs text-muted-foreground font-mono">
-            Asia/Jakarta (WIB) • Currency: IDR
+            Asia/Jakarta (WIB) • Currency: {settings.currency || 'IDR'}
           </span>
         </div>
 
@@ -113,16 +144,16 @@ export default function DashboardPage() {
           <div className="p-5 bg-card border border-border rounded-xl shadow-xs">
             <div className="flex items-center justify-between text-xs font-medium text-muted-foreground">
               <span>{t('dashboard.revenueToday')}</span>
-              <span className="inline-flex items-center text-emerald-600 dark:text-emerald-400 font-semibold text-xs">
-                +14.2% vs Yesterday
+              <span className="text-emerald-600 font-semibold text-xs">
+                {analytics?.occupiedToday || 0} Kamar Terisi
               </span>
             </div>
             <div className="mt-2 text-2xl font-extrabold text-foreground tracking-tight">
-              {formatCurrency(12450000)}
+              {formatCurrency(analytics?.revenueToday || 0)}
             </div>
             <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span>Yesterday:</span>
-              <span className="font-medium text-foreground">{formatCurrency(10900000)}</span>
+              <span>Okupansi:</span>
+              <span className="font-bold text-foreground">{analytics?.occupancyPercent || 0}%</span>
             </div>
           </div>
 
@@ -130,50 +161,44 @@ export default function DashboardPage() {
           <div className="p-5 bg-card border border-border rounded-xl shadow-xs">
             <div className="flex items-center justify-between text-xs font-medium text-muted-foreground">
               <span>{t('dashboard.revenueMtd')}</span>
-              <span className="inline-flex items-center text-emerald-600 dark:text-emerald-400 font-semibold text-xs">
-                +8.5% vs Prev Month
-              </span>
+              <span className="text-emerald-600 font-semibold text-xs">Bulan Berjalan</span>
             </div>
             <div className="mt-2 text-2xl font-extrabold text-foreground tracking-tight">
-              {formatCurrency(284600000)}
+              {formatCurrency(analytics?.revenueMtd || 0)}
             </div>
             <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span>Target:</span>
-              <span className="font-medium text-foreground">{formatCurrency(350000000)}</span>
-              <span className="text-emerald-600 dark:text-emerald-400">(81.3%)</span>
+              <span>Kamar Bersih / Kotor:</span>
+              <span className="font-medium text-emerald-600">{analytics?.cleanRooms || 0} Clean</span>
+              <span>/</span>
+              <span className="font-medium text-amber-600">{analytics?.dirtyRooms || 0} Dirty</span>
             </div>
           </div>
 
-          {/* YTD */}
+          {/* Total + ADR/RevPAR */}
           <div className="p-5 bg-card border border-border rounded-xl shadow-xs">
             <div className="flex items-center justify-between text-xs font-medium text-muted-foreground">
-              <span>{t('dashboard.revenueYtd')}</span>
-              <span className="inline-flex items-center text-emerald-600 dark:text-emerald-400 font-semibold text-xs">
-                +22.4% vs Prev Year
-              </span>
+              <span>Total Revenue Tercatat</span>
+              <span className="text-primary font-semibold text-xs">Real-Time DB</span>
             </div>
             <div className="mt-2 text-2xl font-extrabold text-foreground tracking-tight">
-              {formatCurrency(3140500000)}
+              {formatCurrency(analytics?.revenueTotal || 0)}
             </div>
             <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
               <span>ADR:</span>
-              <span className="font-medium text-foreground">{formatCurrency(720000)}</span>
+              <span className="font-medium text-foreground">{formatCurrency(analytics?.adr || 0)}</span>
               <span className="ml-2">RevPAR:</span>
-              <span className="font-medium text-foreground">{formatCurrency(540000)}</span>
+              <span className="font-medium text-foreground">{formatCurrency(analytics?.revpar || 0)}</span>
             </div>
           </div>
         </div>
       </div>
 
-      {/* 3. Bookings Overview (Bookings Today, Available Rooms, Check-ins, Check-outs) */}
+      {/* 3. Bookings Overview */}
       <div>
         <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <h2 className="text-lg font-bold text-foreground tracking-tight">
-              {t('dashboard.bookingsOverview')}
-            </h2>
-            <HelpCircle className="w-4 h-4 text-muted-foreground hover:text-foreground cursor-pointer" />
-          </div>
+          <h2 className="text-lg font-bold text-foreground tracking-tight">
+            {t('dashboard.bookingsOverview')}
+          </h2>
           <Link href="/front-office" className="text-xs text-primary font-semibold hover:underline flex items-center gap-1">
             Buka Front Desk & Tape Chart <ArrowUpRight className="w-3.5 h-3.5" />
           </Link>
@@ -181,83 +206,66 @@ export default function DashboardPage() {
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="p-4 bg-card border border-border rounded-xl shadow-xs flex items-center gap-4">
-            <div className="p-3 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400">
+            <div className="p-3 rounded-xl bg-blue-500/10 text-blue-600">
               <CalendarCheck className="w-5 h-5" />
             </div>
             <div>
-              <div className="text-xs text-muted-foreground font-medium">{t('dashboard.bookingsToday')}</div>
-              <div className="text-2xl font-bold text-foreground">18</div>
-              <div className="text-[11px] text-muted-foreground">+4 from Agoda</div>
+              <div className="text-xs text-muted-foreground font-medium">In-House Saat Ini</div>
+              <div className="text-2xl font-bold text-foreground">{analytics?.inHouseCount || 0}</div>
+              <div className="text-[11px] text-muted-foreground">Tamu menginap aktif</div>
             </div>
           </div>
 
           <div className="p-4 bg-card border border-border rounded-xl shadow-xs flex items-center gap-4">
-            <div className="p-3 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+            <div className="p-3 rounded-xl bg-emerald-500/10 text-emerald-600">
               <DoorOpen className="w-5 h-5" />
             </div>
             <div>
               <div className="text-xs text-muted-foreground font-medium">{t('dashboard.roomsAvailable')}</div>
-              <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">8 / 40</div>
-              <div className="text-[11px] text-muted-foreground">80% Occupancy (32 Booked)</div>
+              <div className="text-2xl font-bold text-emerald-600">
+                {availableRooms} / {analytics?.totalRooms || 0}
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                {analytics?.occupancyPercent || 0}% Occupancy
+              </div>
             </div>
           </div>
 
           <div className="p-4 bg-card border border-border rounded-xl shadow-xs flex items-center gap-4">
-            <div className="p-3 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+            <div className="p-3 rounded-xl bg-indigo-500/10 text-indigo-600">
               <LogIn className="w-5 h-5" />
             </div>
             <div>
               <div className="text-xs text-muted-foreground font-medium">{t('dashboard.checkIns')}</div>
-              <div className="text-2xl font-bold text-foreground">12</div>
-              <div className="text-[11px] text-muted-foreground">7 Checked In, 5 Due</div>
+              <div className="text-2xl font-bold text-foreground">{analytics?.arrivalsToday || 0}</div>
+              <div className="text-[11px] text-muted-foreground">Kedatangan hari ini</div>
             </div>
           </div>
 
           <div className="p-4 bg-card border border-border rounded-xl shadow-xs flex items-center gap-4">
-            <div className="p-3 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+            <div className="p-3 rounded-xl bg-amber-500/10 text-amber-600">
               <LogOut className="w-5 h-5" />
             </div>
             <div>
               <div className="text-xs text-muted-foreground font-medium">{t('dashboard.checkOuts')}</div>
-              <div className="text-2xl font-bold text-foreground">9</div>
-              <div className="text-[11px] text-muted-foreground">8 Completed, 1 Late</div>
+              <div className="text-2xl font-bold text-foreground">{analytics?.departuresToday || 0}</div>
+              <div className="text-[11px] text-muted-foreground">Keberangkatan hari ini</div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* 4. Interactive Analytics Visuals (Recharts Pace & Channel Share) */}
+      {/* 4. Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left: Revenue & Occupancy Pace Area Chart (2 cols) */}
         <div className="lg:col-span-2 bg-card border border-border rounded-xl shadow-xs p-5 flex flex-col justify-between">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="font-bold text-base text-foreground flex items-center gap-2">
-                <BarChart3 className="w-4 h-4 text-primary" />
-                Revenue & Occupancy Pace Trend
-              </h3>
-              <p className="text-xs text-muted-foreground">
-                Daily actualized room revenue against hotel occupancy pace
-              </p>
-            </div>
-            <div className="flex items-center gap-1.5 bg-muted/60 p-1 rounded-lg text-xs font-semibold">
-              <button
-                onClick={() => setTrendRange('7d')}
-                className={`px-2.5 py-1 rounded-md transition-colors ${
-                  trendRange === '7d' ? 'bg-primary text-white shadow-xs' : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                7 Days
-              </button>
-              <button
-                onClick={() => setTrendRange('30d')}
-                className={`px-2.5 py-1 rounded-md transition-colors ${
-                  trendRange === '30d' ? 'bg-primary text-white shadow-xs' : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                30 Days
-              </button>
-            </div>
+          <div className="mb-4">
+            <h3 className="font-bold text-base text-foreground flex items-center gap-2">
+              <BarChart3 className="w-4 h-4 text-primary" />
+              Tren Pendapatan Kamar (7 Hari Terakhir)
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Pendapatan kamar harian aktual dari reservasi PostgreSQL
+            </p>
           </div>
 
           <div className="h-64 w-full">
@@ -277,10 +285,7 @@ export default function DashboardPage() {
                   width={70}
                 />
                 <Tooltip
-                  formatter={(val: any, name: any) => {
-                    if (name === 'revenue') return [formatCurrency(val), 'Revenue'];
-                    return [val, name];
-                  }}
+                  formatter={(val: any) => [formatCurrency(val), 'Revenue']}
                   contentStyle={{
                     backgroundColor: 'rgba(255, 255, 255, 0.95)',
                     borderRadius: '8px',
@@ -300,61 +305,44 @@ export default function DashboardPage() {
               </AreaChart>
             </ResponsiveContainer>
           </div>
-
-          <div className="mt-3 pt-3 border-t border-border flex items-center justify-between text-xs text-muted-foreground">
-            <div className="flex items-center gap-4">
-              <span className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-primary" /> Room Revenue
-              </span>
-              <span>Avg ADR: <strong>{formatCurrency(720000)}</strong></span>
-            </div>
-            <span className="font-medium text-foreground">Peak Occupancy: 92% (22 Nov)</span>
-          </div>
         </div>
 
-        {/* Right: Channel Share Donut Chart (1 col) */}
         <div className="bg-card border border-border rounded-xl shadow-xs p-5 flex flex-col justify-between">
-          <div className="flex items-center justify-between mb-2">
-            <div>
-              <h3 className="font-bold text-base text-foreground flex items-center gap-2">
-                <PieIcon className="w-4 h-4 text-rose-500" />
-                Channel Distribution
-              </h3>
-              <p className="text-xs text-muted-foreground">Share of reservations by source</p>
-            </div>
+          <div className="mb-2">
+            <h3 className="font-bold text-base text-foreground flex items-center gap-2">
+              <PieIcon className="w-4 h-4 text-rose-500" />
+              Distribusi Channel Reservasi
+            </h3>
+            <p className="text-xs text-muted-foreground">Berdasarkan sumber pemesanan</p>
           </div>
 
-          <div className="h-52 w-full flex items-center justify-center">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={CHANNEL_SHARE_DATA}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={50}
-                  outerRadius={75}
-                  paddingAngle={4}
-                  dataKey="value"
-                >
-                  {CHANNEL_SHARE_DATA.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  formatter={(val: any) => [`${val}%`, 'Share']}
-                  contentStyle={{
-                    backgroundColor: 'rgba(255, 255, 255, 0.95)',
-                    borderRadius: '8px',
-                    fontSize: '11px',
-                    color: '#0f172a',
-                  }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
+          <div className="h-48 w-full flex items-center justify-center">
+            {channelData.length === 0 ? (
+              <span className="text-xs text-muted-foreground">Belum ada data reservasi</span>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={channelData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={45}
+                    outerRadius={70}
+                    paddingAngle={4}
+                    dataKey="value"
+                  >
+                    {channelData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(val: any) => [`${val}%`, 'Share']} />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
           </div>
 
           <div className="space-y-1.5 pt-2 border-t border-border">
-            {CHANNEL_SHARE_DATA.map((item) => (
+            {channelData.map((item) => (
               <div key={item.name} className="flex items-center justify-between text-xs">
                 <div className="flex items-center gap-2">
                   <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
@@ -370,17 +358,11 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* 5. Main Grid: Recent Bookings Table + Side Widgets (Property Card, Error Status, Channels) */}
+      {/* 5. Recent Bookings + Property Card */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left: Recent Bookings Table (2 cols) */}
         <div className="lg:col-span-2 bg-card border border-border rounded-xl shadow-xs overflow-hidden">
           <div className="flex items-center justify-between p-5 border-b border-border">
-            <div className="flex items-center gap-2">
-              <h3 className="font-bold text-base text-foreground">
-                {t('dashboard.recentBookings')}
-              </h3>
-              <HelpCircle className="w-3.5 h-3.5 text-muted-foreground" />
-            </div>
+            <h3 className="font-bold text-base text-foreground">{t('dashboard.recentBookings')}</h3>
             <Link
               href="/front-office"
               className="text-xs font-semibold text-primary hover:underline flex items-center gap-1"
@@ -397,135 +379,46 @@ export default function DashboardPage() {
                   <th className="px-4 py-3">Booking #</th>
                   <th className="px-4 py-3">Guest Name</th>
                   <th className="px-4 py-3">Dates</th>
-                  <th className="px-4 py-3">Room Type</th>
-                  <th className="px-4 py-3">Total Amount</th>
+                  <th className="px-4 py-3">Room</th>
+                  <th className="px-4 py-3">Total</th>
                   <th className="px-4 py-3">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {/* Agoda OTA Reservation */}
-                <tr className="hover:bg-muted/20 transition-colors">
-                  <td className="px-4 py-3.5">
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-600 border border-rose-500/20">
-                      AGODA
-                    </span>
-                  </td>
-                  <td className="px-4 py-3.5 font-mono font-medium text-foreground">
-                    AGD-88291
-                  </td>
-                  <td className="px-4 py-3.5 font-medium text-foreground">
-                    Bambang Setyawan
-                  </td>
-                  <td className="px-4 py-3.5 text-muted-foreground">
-                    24 Nov - 26 Nov
-                  </td>
-                  <td className="px-4 py-3.5 text-foreground">
-                    Deluxe King (Room 201)
-                  </td>
-                  <td className="px-4 py-3.5 font-semibold text-foreground">
-                    {formatCurrency(1760000)}
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-500/10 text-emerald-600">
-                      CONFIRMED
-                    </span>
-                  </td>
-                </tr>
-
-                {/* Direct Booking */}
-                <tr className="hover:bg-muted/20 transition-colors">
-                  <td className="px-4 py-3.5">
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-600 border border-blue-500/20">
-                      DIRECT
-                    </span>
-                  </td>
-                  <td className="px-4 py-3.5 font-mono font-medium text-foreground">
-                    BK-2026-0042
-                  </td>
-                  <td className="px-4 py-3.5 font-medium text-foreground">
-                    Siti Rahmawati
-                  </td>
-                  <td className="px-4 py-3.5 text-muted-foreground">
-                    24 Nov - 25 Nov
-                  </td>
-                  <td className="px-4 py-3.5 text-foreground">
-                    Superior Twin (Room 104)
-                  </td>
-                  <td className="px-4 py-3.5 font-semibold text-foreground">
-                    {formatCurrency(750000)}
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold bg-indigo-500/10 text-indigo-600">
-                      CHECKED_IN
-                    </span>
-                  </td>
-                </tr>
-
-                {/* Walk-in Booking */}
-                <tr className="hover:bg-muted/20 transition-colors">
-                  <td className="px-4 py-3.5">
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/10 text-purple-600 border border-purple-500/20">
-                      WALK-IN
-                    </span>
-                  </td>
-                  <td className="px-4 py-3.5 font-mono font-medium text-foreground">
-                    BK-2026-0043
-                  </td>
-                  <td className="px-4 py-3.5 font-medium text-foreground">
-                    Hendro Wijaya
-                  </td>
-                  <td className="px-4 py-3.5 text-muted-foreground">
-                    24 Nov - 27 Nov
-                  </td>
-                  <td className="px-4 py-3.5 text-foreground">
-                    Executive Suite (Room 302)
-                  </td>
-                  <td className="px-4 py-3.5 font-semibold text-foreground">
-                    {formatCurrency(3600000)}
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-500/10 text-emerald-600">
-                      CONFIRMED
-                    </span>
-                  </td>
-                </tr>
-
-                {/* Agoda Unassigned Booking */}
-                <tr className="hover:bg-muted/20 transition-colors">
-                  <td className="px-4 py-3.5">
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-600 border border-rose-500/20">
-                      AGODA
-                    </span>
-                  </td>
-                  <td className="px-4 py-3.5 font-mono font-medium text-foreground">
-                    AGD-88292
-                  </td>
-                  <td className="px-4 py-3.5 font-medium text-foreground">
-                    Jessica Hartono
-                  </td>
-                  <td className="px-4 py-3.5 text-muted-foreground">
-                    25 Nov - 28 Nov
-                  </td>
-                  <td className="px-4 py-3.5 text-amber-600 font-medium">
-                    Family Suite (Unassigned)
-                  </td>
-                  <td className="px-4 py-3.5 font-semibold text-foreground">
-                    {formatCurrency(4800000)}
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold bg-amber-500/10 text-amber-600">
-                      UNASSIGNED
-                    </span>
-                  </td>
-                </tr>
+                {!analytics || analytics.recentBookings.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
+                      Belum ada reservasi tercatat pada hotel ini.
+                    </td>
+                  </tr>
+                ) : (
+                  analytics.recentBookings.map((b) => (
+                    <tr key={b.id} className="hover:bg-muted/20">
+                      <td className="px-4 py-3 font-bold text-primary">{b.source}</td>
+                      <td className="px-4 py-3 font-mono">{b.bookingNumber}</td>
+                      <td className="px-4 py-3 font-semibold text-foreground">{b.guestName}</td>
+                      <td className="px-4 py-3 text-muted-foreground font-mono">
+                        {b.checkInDate} → {b.checkOutDate}
+                      </td>
+                      <td className="px-4 py-3">
+                        {b.roomNumber} ({b.roomType})
+                      </td>
+                      <td className="px-4 py-3 font-mono font-bold">{formatCurrency(b.totalAmount)}</td>
+                      <td className="px-4 py-3">
+                        <span className="px-2 py-0.5 rounded bg-primary/10 text-primary text-[10px] font-bold">
+                          {b.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
         </div>
 
-        {/* Right: Side Cards (Property Card, Error Status, Channels Status, Quick Access) */}
+        {/* Right Side Cards */}
         <div className="space-y-4">
-          {/* Active Property Card with Booking Engine Link */}
           <div className="p-5 bg-card border border-border rounded-xl shadow-xs">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
@@ -533,16 +426,12 @@ export default function DashboardPage() {
               </span>
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
             </div>
-            <h4 className="mt-2 font-bold text-base text-foreground">
-              Hotel Winotosastro AProject
-            </h4>
-            <p className="text-xs text-muted-foreground">
-              Jl. Brigjend Slamet Riyadi, Surakarta (Solo), Central Java
-            </p>
+            <h4 className="mt-2 font-bold text-base text-foreground">{settings.hotelName}</h4>
+            <p className="text-xs text-muted-foreground">{settings.address || settings.city}</p>
             <div className="mt-4 pt-3 border-t border-border flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">40 Rooms • 4 Floors</span>
+              <span className="text-xs text-muted-foreground">{analytics?.totalRooms || 0} Rooms</span>
               <Link
-                href="/book/hotel-winotosastro"
+                href={`/book/${(settings.propertyCode || 'winotosastro').toLowerCase()}`}
                 target="_blank"
                 className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline"
               >
@@ -551,47 +440,6 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Channels Status (Per OTA Health) */}
-          <div className="p-5 bg-card border border-border rounded-xl shadow-xs">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                {t('dashboard.channelStatus')}
-              </span>
-              <HelpCircle className="w-3.5 h-3.5 text-muted-foreground" />
-            </div>
-            <div className="space-y-2.5">
-              <div className="flex items-center justify-between p-2.5 bg-muted/40 rounded-lg">
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                  <span className="text-xs font-bold text-foreground">Agoda Extranet</span>
-                  <span className="text-[10px] px-1.5 py-0.2 bg-primary/10 text-primary font-semibold rounded">
-                    MOCK/SANDBOX
-                  </span>
-                </div>
-                <span className="text-xs font-mono text-emerald-600 dark:text-emerald-400">
-                  38ms • OK
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between p-2.5 bg-muted/20 rounded-lg opacity-60">
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-amber-400" />
-                  <span className="text-xs font-medium text-foreground">Booking.com</span>
-                </div>
-                <span className="text-[11px] text-muted-foreground">Pending Phase 6</span>
-              </div>
-
-              <div className="flex items-center justify-between p-2.5 bg-muted/20 rounded-lg opacity-60">
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-muted-foreground/40" />
-                  <span className="text-xs font-medium text-foreground">Traveloka</span>
-                </div>
-                <span className="text-[11px] text-muted-foreground">Scheduled</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Error Status Center */}
           <div className="p-5 bg-card border border-border rounded-xl shadow-xs">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
@@ -600,41 +448,28 @@ export default function DashboardPage() {
               <CheckCircle2 className="w-4 h-4 text-emerald-500" />
             </div>
             <p className="text-xs text-muted-foreground">
-              All inventory ledgers and ARI sync queues are operating normally. 0 active sync errors.
+              PostgreSQL & sistem multi-tenant aktif. 0 error sinkronisasi.
             </p>
           </div>
 
-          {/* Quick Access Shortcuts */}
           <div className="p-5 bg-card border border-border rounded-xl shadow-xs">
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 block">
               {t('dashboard.quickAccess')}
             </span>
             <div className="grid grid-cols-2 gap-2 text-xs">
-              <Link
-                href="/front-office"
-                className="flex items-center gap-2 p-2 bg-muted/40 hover:bg-muted rounded-lg font-medium text-foreground transition-colors"
-              >
+              <Link href="/front-office" className="flex items-center gap-2 p-2 bg-muted/40 hover:bg-muted rounded-lg font-medium">
                 <PlusCircle className="w-3.5 h-3.5 text-primary" />
                 Reservasi Baru
               </Link>
-              <Link
-                href="/front-office"
-                className="flex items-center gap-2 p-2 bg-muted/40 hover:bg-muted rounded-lg font-medium text-foreground transition-colors"
-              >
+              <Link href="/front-office" className="flex items-center gap-2 p-2 bg-muted/40 hover:bg-muted rounded-lg font-medium">
                 <Calendar className="w-3.5 h-3.5 text-primary" />
-                Tape & Operasional
+                Tape Chart
               </Link>
-              <Link
-                href="/channels"
-                className="flex items-center gap-2 p-2 bg-muted/40 hover:bg-muted rounded-lg font-medium text-foreground transition-colors"
-              >
+              <Link href="/channels" className="flex items-center gap-2 p-2 bg-muted/40 hover:bg-muted rounded-lg font-medium">
                 <Share2 className="w-3.5 h-3.5 text-primary" />
                 Push ARI
               </Link>
-              <Link
-                href="/rates"
-                className="flex items-center gap-2 p-2 bg-muted/40 hover:bg-muted rounded-lg font-medium text-foreground transition-colors"
-              >
+              <Link href="/rates" className="flex items-center gap-2 p-2 bg-muted/40 hover:bg-muted rounded-lg font-medium">
                 <DollarSign className="w-3.5 h-3.5 text-primary" />
                 Rate Matrix
               </Link>

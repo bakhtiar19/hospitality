@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.PaymentMethod = exports.ChannelCode = exports.HousekeepingStatus = exports.RoomOperationalStatus = exports.PaymentStatus = exports.BookingStatus = exports.PermissionCode = exports.UserRole = void 0;
 var UserRole;
 (function (UserRole) {
+    UserRole["SUPER_ADMIN"] = "SUPER_ADMIN";
     UserRole["OWNER"] = "OWNER";
     UserRole["MANAGER"] = "MANAGER";
     UserRole["FRONT_DESK"] = "FRONT_DESK";

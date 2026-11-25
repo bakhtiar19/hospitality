@@ -6,12 +6,13 @@ import { AuthController } from './auth.controller.js';
 import { JwtStrategy } from './jwt.strategy.js';
 import { RolesGuard } from './guards/roles.guard.js';
 import { PermissionsGuard } from './guards/permissions.guard.js';
+import { getJwtAccessSecret } from '../../common/config/security.config.js';
 
 @Module({
   imports: [
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.register({
-      secret: process.env.JWT_ACCESS_SECRET || 'super-secret-jwt-access-key-change-in-production-2026',
+      secret: getJwtAccessSecret(),
       signOptions: { expiresIn: '15m' },
     }),
   ],

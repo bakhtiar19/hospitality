@@ -1,3 +1,5 @@
+import { apiRequest, getStoredSession } from './api-client';
+
 export interface OTASettlementTransaction {
   id: string;
   otaChannel: 'Agoda' | 'Booking.com' | 'Traveloka' | 'Tiket.com' | 'Expedia';
@@ -172,6 +174,19 @@ export function settleOTATransaction(
         }
       : tx
   );
+  saveStoredOTATransactions(updated);
+  return updated;
+}
+
+export async function apiSettleOTATransactions(
+  ids: string[],
+  reference?: string
+): Promise<OTASettlementTransaction[] | null> {
+  if (!getStoredSession()) return null;
+  const updated = await apiRequest<OTASettlementTransaction[]>('/pms/finance/settlements/settle', {
+    method: 'POST',
+    body: JSON.stringify({ ids, reference }),
+  });
   saveStoredOTATransactions(updated);
   return updated;
 }

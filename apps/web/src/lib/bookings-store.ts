@@ -1,3 +1,5 @@
+import { apiRequest, getStoredSession } from './api-client';
+
 export type ReservationTimeFrame = 'WALK_IN' | 'FIT' | 'OTA' | 'CORPORATE';
 
 export type PaymentMethod =
@@ -287,4 +289,105 @@ export function getPaymentMethodLabel(method: PaymentMethod): string {
     default:
       return method;
   }
+}
+
+export async function apiCreatePmsBooking(payload: {
+  guestName: string;
+  phone?: string;
+  idNumber?: string;
+  idType?: string;
+  roomNumber: string;
+  ratePlan?: string;
+  checkInDate: string;
+  checkOutDate: string;
+  reservationType?: ReservationTimeFrame;
+  source?: 'DIRECT' | 'AGODA' | 'WALK_IN' | 'CORPORATE';
+  autoCheckIn?: boolean;
+  nightlyRate?: number;
+  initialPaymentMethod?: string;
+  initialPaymentAmount?: number;
+  notes?: string;
+}): Promise<TapeChartBooking | null> {
+  if (!getStoredSession()) return null;
+  const created = await apiRequest<TapeChartBooking>('/pms/bookings', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  const current = getStoredBookings();
+  saveStoredBookings([created, ...current.filter((b) => b.id !== created.id)]);
+  return created;
+}
+
+export async function apiCheckInBooking(bookingId: string): Promise<TapeChartBooking | null> {
+  if (!getStoredSession()) return null;
+  const updated = await apiRequest<TapeChartBooking>(`/pms/bookings/${bookingId}/check-in`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+  const current = getStoredBookings();
+  saveStoredBookings(current.map((b) => (b.id === bookingId ? updated : b)));
+  return updated;
+}
+
+export async function apiCheckOutBooking(
+  bookingId: string,
+  todayDate: string
+): Promise<TapeChartBooking | null> {
+  if (!getStoredSession()) return null;
+  const updated = await apiRequest<TapeChartBooking>(`/pms/bookings/${bookingId}/check-out`, {
+    method: 'POST',
+    body: JSON.stringify({ todayDate }),
+  });
+  const current = getStoredBookings();
+  saveStoredBookings(current.map((b) => (b.id === bookingId ? updated : b)));
+  return updated;
+}
+
+export async function apiExtendBookingStay(
+  bookingId: string,
+  payload: { newCheckOutDate: string; roomNumber: string; nightlyRate?: number }
+): Promise<{ isMoved: boolean; booking: TapeChartBooking } | null> {
+  if (!getStoredSession()) return null;
+  const res = await apiRequest<{ isMoved: boolean; booking: TapeChartBooking }>(
+    `/pms/bookings/${bookingId}/extend`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  );
+  const current = getStoredBookings();
+  if (res.isMoved) {
+    saveStoredBookings([res.booking, ...current]);
+  } else {
+    saveStoredBookings(current.map((b) => (b.id === bookingId ? res.booking : b)));
+  }
+  return res;
+}
+
+export async function apiRecordBookingPayment(
+  bookingId: string,
+  payment: {
+    amount: number;
+    method: PaymentMethod;
+    reference?: string;
+    notes?: string;
+    date?: string;
+  }
+): Promise<TapeChartBooking | null> {
+  if (!getStoredSession()) return null;
+  const updated = await apiRequest<TapeChartBooking>(`/pms/bookings/${bookingId}/payments`, {
+    method: 'POST',
+    body: JSON.stringify(payment),
+  });
+  const current = getStoredBookings();
+  saveStoredBookings(current.map((b) => (b.id === bookingId ? updated : b)));
+  return updated;
+}
+
+export async function apiDeletePmsBooking(bookingId: string): Promise<boolean> {
+  if (!getStoredSession()) return false;
+  await apiRequest(`/pms/bookings/${bookingId}`, { method: 'DELETE' });
+  const current = getStoredBookings();
+  saveStoredBookings(current.filter((b) => b.id !== bookingId));
+  return true;
 }

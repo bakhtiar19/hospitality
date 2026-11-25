@@ -3,6 +3,7 @@ import './globals.css';
 import { ThemeProvider } from '../providers/theme-provider';
 import { QueryProvider } from '../providers/query-provider';
 import { IntlProvider } from '../providers/intl-provider';
+import { AuthProvider } from '../providers/auth-provider';
 
 export const metadata: Metadata = {
   title: 'Hospitality PMS & Channel Manager | Hotel Winotosastro AProject',
@@ -19,7 +20,9 @@ export default function RootLayout({
       <body>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <QueryProvider>
-            <IntlProvider>{children}</IntlProvider>
+            <IntlProvider>
+              <AuthProvider>{children}</AuthProvider>
+            </IntlProvider>
           </QueryProvider>
         </ThemeProvider>
       </body>

@@ -1,0 +1,27 @@
+{$APP_DOMAIN::80} {
+  encode zstd gzip
+
+  header {
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "DENY"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    -Server
+  }
+
+  # Reverse proxy API requests to lightweight NestJS backend
+  handle /api/* {
+    reverse_proxy api:4000
+  }
+
+  # Serve static Next.js frontend
+  handle {
+    root * /srv/web
+
+    # Support dynamic hotel slugs for public booking engine (/book/<hotel-code>)
+    @bookingEngine path_regexp ^/book/[^/]+/?$
+    rewrite @bookingEngine /book/winotosastro/index.html
+
+    try_files {path} {path}/index.html /index.html
+    file_server
+  }
+}

@@ -22,9 +22,11 @@ import {
   ChevronRight,
   Hotel,
   DollarSign,
+  Crown,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useI18n } from '../../providers/intl-provider';
+import { useAuth } from '../../providers/auth-provider';
 
 interface NavItem {
   id: string;
@@ -55,6 +57,7 @@ export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
   const { t } = useI18n();
+  const { isSuperAdmin } = useAuth();
 
   return (
     <aside
@@ -91,6 +94,26 @@ export function Sidebar() {
 
       {/* Nav List mirroring Bookandlink Module Layout */}
       <div className="flex-1 overflow-y-auto py-3 px-3 space-y-1 scrollbar-thin">
+        {isSuperAdmin && (
+          <Link
+            href="/admin"
+            className={cn(
+              'group flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-bold transition-all duration-150 mb-2 border',
+              pathname.startsWith('/admin')
+                ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-sm'
+                : 'bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20'
+            )}
+            title={collapsed ? 'Super Admin Console' : undefined}
+          >
+            <Crown className="w-5 h-5 flex-shrink-0" />
+            {!collapsed && <span className="flex-1 truncate">Super Admin</span>}
+            {!collapsed && (
+              <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-amber-400/20 uppercase">
+                All Hotels
+              </span>
+            )}
+          </Link>
+        )}
         {navItems.map((item) => {
           const Icon = item.icon;
           const isActive = pathname.startsWith(item.href) && (item.href !== '/dashboard' || pathname === '/dashboard');

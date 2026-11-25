@@ -45,7 +45,8 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useI18n } from '../../../providers/intl-provider';
-import { formatCurrency, formatThousands, parseThousands } from '../../../lib/utils';
+import { useAuth } from '../../../providers/auth-provider';
+import { formatCurrency, formatThousands, parseThousands, getTodayJakarta, addDaysIso } from '../../../lib/utils';
 import {
   TapeChartBooking,
   PaymentMethod,
@@ -54,13 +55,19 @@ import {
   getStoredBookings,
   saveStoredBookings,
   addPaymentToBooking,
+  apiCreatePmsBooking,
+  apiCheckInBooking,
+  apiCheckOutBooking,
+  apiExtendBookingStay,
+  apiRecordBookingPayment,
+  apiDeletePmsBooking,
   initialBookings,
   calculateBookingBalance,
   getPaymentMethodLabel,
 } from '../../../lib/bookings-store';
 import { getHotelSettings, HotelSettings } from '../../../lib/settings-store';
 
-const mockRooms = [
+const defaultMockRooms = [
   // Lantai 1: Superior
   { number: '101', floor: 1, type: 'Superior', clean: true, baseRate: 650000 },
   { number: '102', floor: 1, type: 'Superior', clean: true, baseRate: 650000 },
@@ -85,7 +92,21 @@ const mockRooms = [
 
 export default function FrontDeskReservasiPage() {
   const { t } = useI18n();
-  const today = '2026-11-24';
+  const { dbSynced, rooms: dbRooms } = useAuth();
+  const today = getTodayJakarta();
+
+  const mockRooms = useMemo(() => {
+    if (dbSynced && dbRooms.length > 0) {
+      return dbRooms.map((r) => ({
+        number: r.number,
+        floor: r.floor,
+        type: r.type,
+        clean: r.housekeepingStatus === 'CLEAN' || r.housekeepingStatus === 'INSPECTED',
+        baseRate: r.baseRate,
+      }));
+    }
+    return defaultMockRooms;
+  }, [dbSynced, dbRooms]);
 
   // Primary View Mode: 'calendar' (Tape Chart) or 'list' (Operational List)
   const [viewMode, setViewMode] = useState<'calendar' | 'list'>('calendar');
@@ -120,7 +141,7 @@ export default function FrontDeskReservasiPage() {
   // ----------------------------------------------------
   // CALENDAR / TAPE CHART STATE
   // ----------------------------------------------------
-  const [chartStartDate, setChartStartDate] = useState('2026-11-22');
+  const [chartStartDate, setChartStartDate] = useState(() => addDaysIso(getTodayJakarta(), -2));
   const [daysCount, setDaysCount] = useState<7 | 14 | 30>(14);
   const [floorFilter, setFloorFilter] = useState<string>('ALL');
   const [calendarSearch, setCalendarSearch] = useState('');
@@ -146,7 +167,7 @@ export default function FrontDeskReservasiPage() {
   const [formRoomNumber, setFormRoomNumber] = useState('101');
   const [formRoomRate, setFormRoomRate] = useState<number>(650000);
   const [formCheckIn, setFormCheckIn] = useState(today);
-  const [formCheckOut, setFormCheckOut] = useState('2026-11-25');
+  const [formCheckOut, setFormCheckOut] = useState(() => addDaysIso(today, 1));
   const [formRatePlan, setFormRatePlan] = useState('Room Only');
   const [formAutoCheckIn, setFormAutoCheckIn] = useState(true);
   const [formInitialPaymentMethod, setFormInitialPaymentMethod] = useState<PaymentMethod | 'NONE'>('NONE');
@@ -300,66 +321,92 @@ export default function FrontDeskReservasiPage() {
   }, [formCheckIn, formCheckOut, bookings]);
 
   // Cancel / Delete a booking
-  const handleCancelBooking = (bookingId: string) => {
+  const handleCancelBooking = async (bookingId: string) => {
     const target = bookings.find((b) => b.id === bookingId);
     if (!target) return;
     if (!confirm(`Batalkan dan hapus reservasi atas nama ${target.guestName} (#${target.bookingNumber}) di Kamar ${target.roomNumber}?`)) return;
 
-    const updated = bookings.filter((b) => b.id !== bookingId);
-    setBookings(updated);
-    saveStoredBookings(updated);
-    if (selectedBooking?.id === bookingId) {
-      setSelectedBooking(null);
+    try {
+      if (dbSynced) {
+        await apiDeletePmsBooking(bookingId);
+        setBookings(getStoredBookings());
+      } else {
+        const updated = bookings.filter((b) => b.id !== bookingId);
+        setBookings(updated);
+        saveStoredBookings(updated);
+      }
+      if (selectedBooking?.id === bookingId) {
+        setSelectedBooking(null);
+      }
+      triggerToast(`Reservasi ${target.guestName} (#${target.bookingNumber}) berhasil dibatalkan dan dihapus.`);
+    } catch (err: any) {
+      alert(err?.message || 'Gagal menghapus reservasi.');
     }
-    triggerToast(`Reservasi ${target.guestName} (#${target.bookingNumber}) berhasil dibatalkan dan dihapus.`);
   };
 
   // ----------------------------------------------------
   // OPERATIONAL ACTIONS: CHECK-IN, CHECK-OUT, EXTEND, PAY
   // ----------------------------------------------------
-  const handleExecuteCheckIn = (booking: TapeChartBooking) => {
-    const updated = bookings.map((b) =>
-      b.id === booking.id ? { ...b, status: 'IN_HOUSE' as const } : b
-    );
-    setBookings(updated);
-    saveStoredBookings(updated);
-    if (selectedBooking?.id === booking.id) {
-      setSelectedBooking({ ...selectedBooking, status: 'IN_HOUSE' });
+  const handleExecuteCheckIn = async (booking: TapeChartBooking) => {
+    try {
+      const apiUpdated = dbSynced ? await apiCheckInBooking(booking.id) : null;
+      if (apiUpdated) {
+        setBookings(getStoredBookings());
+        if (selectedBooking?.id === booking.id) setSelectedBooking(apiUpdated);
+      } else {
+        const updated = bookings.map((b) =>
+          b.id === booking.id ? { ...b, status: 'IN_HOUSE' as const } : b
+        );
+        setBookings(updated);
+        saveStoredBookings(updated);
+        if (selectedBooking?.id === booking.id) {
+          setSelectedBooking({ ...selectedBooking, status: 'IN_HOUSE' });
+        }
+      }
+      triggerToast(`Check-In Berhasil! Tamu ${booking.guestName} kini IN-HOUSE di Kamar ${booking.roomNumber}.`);
+    } catch (err: any) {
+      alert(err?.message || 'Gagal melakukan check-in.');
     }
-    triggerToast(`Check-In Berhasil! Tamu ${booking.guestName} kini IN-HOUSE di Kamar ${booking.roomNumber}.`);
   };
 
-  const handleExecuteCheckOut = (booking: TapeChartBooking) => {
+  const handleExecuteCheckOut = async (booking: TapeChartBooking) => {
     const isEarly = booking.checkOutDate > today;
-    const updated = bookings.map((b) =>
-      b.id === booking.id
-        ? {
-            ...b,
-            status: 'CHECKED_OUT' as const,
-            checkOutDate: isEarly ? today : b.checkOutDate,
-          }
-        : b
-    );
-    setBookings(updated);
-    saveStoredBookings(updated);
-    if (selectedBooking?.id === booking.id) {
-      setSelectedBooking({
-        ...selectedBooking,
-        status: 'CHECKED_OUT',
-        checkOutDate: isEarly ? today : selectedBooking.checkOutDate,
-      });
+    try {
+      const apiUpdated = dbSynced ? await apiCheckOutBooking(booking.id, today) : null;
+      let checkedOutRecord: TapeChartBooking;
+      if (apiUpdated) {
+        setBookings(getStoredBookings());
+        checkedOutRecord = apiUpdated;
+      } else {
+        const updated = bookings.map((b) =>
+          b.id === booking.id
+            ? {
+                ...b,
+                status: 'CHECKED_OUT' as const,
+                checkOutDate: isEarly ? today : b.checkOutDate,
+              }
+            : b
+        );
+        setBookings(updated);
+        saveStoredBookings(updated);
+        checkedOutRecord = {
+          ...booking,
+          status: 'CHECKED_OUT',
+          checkOutDate: isEarly ? today : booking.checkOutDate,
+        };
+      }
+      if (selectedBooking?.id === booking.id) {
+        setSelectedBooking(checkedOutRecord);
+      }
+      triggerToast(
+        isEarly
+          ? `Early Check-Out selesai! Tamu ${booking.guestName} telah check-out dari Kamar ${booking.roomNumber}. Kamar siap dibersihkan.`
+          : `Check-Out selesai! Tamu ${booking.guestName} telah keluar dari Kamar ${booking.roomNumber}. Nota pelunasan siap dicetak.`
+      );
+      setPrintFolioBooking(checkedOutRecord);
+    } catch (err: any) {
+      alert(err?.message || 'Gagal melakukan check-out.');
     }
-    triggerToast(
-      isEarly
-        ? `Early Check-Out selesai! Tamu ${booking.guestName} telah check-out dari Kamar ${booking.roomNumber}. Kamar siap dibersihkan.`
-        : `Check-Out selesai! Tamu ${booking.guestName} telah keluar dari Kamar ${booking.roomNumber}. Nota pelunasan siap dicetak.`
-    );
-    // Offer instant folio print
-    setPrintFolioBooking({
-      ...booking,
-      status: 'CHECKED_OUT',
-      checkOutDate: isEarly ? today : booking.checkOutDate,
-    });
   };
 
   // Open Create Modal with Preset
@@ -376,7 +423,7 @@ export default function FrontDeskReservasiPage() {
       checkOut = tomorrow.toISOString().split('T')[0];
       setFormAutoCheckIn(true);
     } else {
-      checkIn = prefilledDate || '2026-11-25';
+      checkIn = prefilledDate || addDaysIso(today, 1);
       const afterDay = new Date(checkIn);
       afterDay.setDate(afterDay.getDate() + 2);
       checkOut = afterDay.toISOString().split('T')[0];
@@ -428,7 +475,7 @@ export default function FrontDeskReservasiPage() {
     return { nights, ratePerNight, subtotal, service, pbjt, total, room: r };
   };
 
-  const handleSaveNewReservation = (e: React.FormEvent) => {
+  const handleSaveNewReservation = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formGuestName.trim()) {
       alert('Mohon masukkan nama tamu.');
@@ -445,55 +492,81 @@ export default function FrontDeskReservasiPage() {
     }
 
     const { nights, ratePerNight, total, room } = calcNewResPricing();
-    const newId = `b-${Date.now()}`;
-    const bNumber = resTimeFrame === 'WALK_IN' ? `WI-${Date.now().toString().slice(-6)}` : `FIT-${Date.now().toString().slice(-6)}`;
-
-    const initialPayments: PaymentRecord[] = [];
     const cleanInitialPay = parseThousands(formInitialPaymentAmount);
-    if (formInitialPaymentMethod !== 'NONE' && cleanInitialPay > 0) {
-      initialPayments.push({
-        id: `pay-${Date.now()}`,
-        amount: cleanInitialPay,
-        method: formInitialPaymentMethod,
-        date: today,
-        notes: resTimeFrame === 'WALK_IN' ? 'Pembayaran saat Walk-In Check-In' : 'Deposit / DP Pemesanan FIT',
-      });
+
+    try {
+      let createdBooking: TapeChartBooking;
+      if (dbSynced) {
+        const res = await apiCreatePmsBooking({
+          guestName: formGuestName.trim(),
+          phone: formPhone.trim() || undefined,
+          idNumber: formIdNumber.trim() || undefined,
+          idType: 'KTP',
+          roomNumber: formRoomNumber,
+          ratePlan: formRatePlan,
+          checkInDate: formCheckIn,
+          checkOutDate: formCheckOut,
+          reservationType: resTimeFrame,
+          source: resTimeFrame === 'WALK_IN' ? 'WALK_IN' : 'DIRECT',
+          autoCheckIn: resTimeFrame === 'WALK_IN' && formAutoCheckIn,
+          nightlyRate: ratePerNight,
+          initialPaymentMethod: formInitialPaymentMethod,
+          initialPaymentAmount: cleanInitialPay,
+          notes: formNotes.trim() || undefined,
+        });
+        createdBooking = res!;
+        setBookings(getStoredBookings());
+      } else {
+        const newId = `b-${Date.now()}`;
+        const bNumber = resTimeFrame === 'WALK_IN' ? `WI-${Date.now().toString().slice(-6)}` : `FIT-${Date.now().toString().slice(-6)}`;
+        const initialPayments: PaymentRecord[] = [];
+        if (formInitialPaymentMethod !== 'NONE' && cleanInitialPay > 0) {
+          initialPayments.push({
+            id: `pay-${Date.now()}`,
+            amount: cleanInitialPay,
+            method: formInitialPaymentMethod,
+            date: today,
+            notes: resTimeFrame === 'WALK_IN' ? 'Pembayaran saat Walk-In Check-In' : 'Deposit / DP Pemesanan FIT',
+          });
+        }
+        const totalPaid = initialPayments.reduce((acc, p) => acc + p.amount, 0);
+        const balance = Math.max(0, total - totalPaid);
+        createdBooking = {
+          id: newId,
+          bookingNumber: bNumber,
+          source: resTimeFrame === 'WALK_IN' ? 'WALK_IN' : 'DIRECT',
+          reservationType: resTimeFrame,
+          guestName: formGuestName.trim(),
+          phone: formPhone.trim() || undefined,
+          idNumber: formIdNumber.trim() || undefined,
+          idType: 'KTP',
+          roomNumber: formRoomNumber,
+          roomType: room.type,
+          ratePlan: formRatePlan,
+          checkInDate: formCheckIn,
+          checkOutDate: formCheckOut,
+          status: resTimeFrame === 'WALK_IN' && formAutoCheckIn ? 'IN_HOUSE' : 'CONFIRMED',
+          totalAmount: total,
+          balance,
+          payments: initialPayments,
+          notes: formNotes.trim() || undefined,
+        };
+        const updated = [createdBooking, ...bookings];
+        setBookings(updated);
+        saveStoredBookings(updated);
+      }
+
+      const finalBal = calculateBookingBalance(createdBooking);
+      setIsCreateModalOpen(false);
+
+      triggerToast(
+        resTimeFrame === 'WALK_IN'
+          ? `Walk-In Berhasil! Tamu ${createdBooking.guestName} langsung Check-In di Kamar ${createdBooking.roomNumber}. Sisa saldo: ${formatCurrency(finalBal)}.`
+          : `Reservasi FIT Berhasil! Reservasi ${createdBooking.guestName} (${nights} malam) untuk tanggal ${formCheckIn} telah tercatat. Sisa saldo: ${formatCurrency(finalBal)}.`
+      );
+    } catch (err: any) {
+      alert(err?.message || 'Gagal menyimpan reservasi.');
     }
-
-    const totalPaid = initialPayments.reduce((acc, p) => acc + p.amount, 0);
-    const balance = Math.max(0, total - totalPaid);
-
-    const newBooking: TapeChartBooking = {
-      id: newId,
-      bookingNumber: bNumber,
-      source: resTimeFrame === 'WALK_IN' ? 'WALK_IN' : 'DIRECT',
-      reservationType: resTimeFrame,
-      guestName: formGuestName.trim(),
-      phone: formPhone.trim() || undefined,
-      idNumber: formIdNumber.trim() || undefined,
-      idType: 'KTP',
-      roomNumber: formRoomNumber,
-      roomType: room.type,
-      ratePlan: formRatePlan,
-      checkInDate: formCheckIn,
-      checkOutDate: formCheckOut,
-      status: resTimeFrame === 'WALK_IN' && formAutoCheckIn ? 'IN_HOUSE' : 'CONFIRMED',
-      totalAmount: total,
-      balance,
-      payments: initialPayments,
-      notes: formNotes.trim() || undefined,
-    };
-
-    const updated = [newBooking, ...bookings];
-    setBookings(updated);
-    saveStoredBookings(updated);
-    setIsCreateModalOpen(false);
-
-    triggerToast(
-      resTimeFrame === 'WALK_IN'
-        ? `Walk-In Berhasil! Tamu ${newBooking.guestName} langsung Check-In di Kamar ${newBooking.roomNumber}. Sisa saldo: ${formatCurrency(balance)}.`
-        : `Reservasi FIT Berhasil! Reservasi ${newBooking.guestName} (${nights} malam) untuk tanggal ${formCheckIn} telah tercatat. Sisa saldo: ${formatCurrency(balance)}.`
-    );
   };
 
   // Open Extend Stay Modal
@@ -509,7 +582,7 @@ export default function FrontDeskReservasiPage() {
     setExtendRoomRate(rObj ? rObj.baseRate : 650000);
   };
 
-  const handleConfirmExtendStay = () => {
+  const handleConfirmExtendStay = async () => {
     if (!extendModalBooking || !newExtendCheckOut || !extendSelectedRoom) return;
     if (newExtendCheckOut <= extendModalBooking.checkOutDate) {
       alert('Tanggal check-out baru harus lebih lambat dari tanggal check-out saat ini.');
@@ -526,71 +599,82 @@ export default function FrontDeskReservasiPage() {
     const serviceExtra = Math.round(subtotalExtra * 0.1);
     const pbjtExtra = Math.round((subtotalExtra + serviceExtra) * 0.1);
     const totalExtra = subtotalExtra + serviceExtra + pbjtExtra;
-
     const isMoved = extendSelectedRoom !== extendModalBooking.roomNumber;
-    let updated: TapeChartBooking[];
 
-    if (isMoved) {
-      // Pindah kamar untuk perpanjangan: buat booking sambungan di kamar baru
-      const extBooking: TapeChartBooking = {
-        id: `bkg-ext-${Date.now()}`,
-        bookingNumber: `${extendModalBooking.bookingNumber}-EXT`,
-        source: extendModalBooking.source,
-        reservationType: extendModalBooking.reservationType || 'FIT',
-        guestName: extendModalBooking.guestName,
-        phone: extendModalBooking.phone,
-        idNumber: extendModalBooking.idNumber,
-        idType: extendModalBooking.idType,
-        roomNumber: extendSelectedRoom,
-        roomType: chosenRoom ? chosenRoom.type : 'Deluxe Room',
-        ratePlan: extendModalBooking.ratePlan,
-        checkInDate: extendModalBooking.checkOutDate,
-        checkOutDate: newExtendCheckOut,
-        status: extendModalBooking.checkOutDate <= today ? 'IN_HOUSE' : 'CONFIRMED',
-        totalAmount: totalExtra,
-        balance: totalExtra,
-        payments: [],
-        notes: `Perpanjangan Inap (Pindah dari Kamar ${extendModalBooking.roomNumber})`,
-      };
-      updated = [extBooking, ...bookings];
-    } else {
-      // Kamar sama: perpanjang tanggal checkout booking saat ini
-      const newTotalAmount = extendModalBooking.totalAmount + totalExtra;
-      const currentBalance = extendModalBooking.balance ?? 0;
-      const newBalance = currentBalance + totalExtra;
-
-      updated = bookings.map((b) =>
-        b.id === extendModalBooking.id
-          ? {
-              ...b,
-              checkOutDate: newExtendCheckOut,
-              totalAmount: newTotalAmount,
-              balance: newBalance,
-            }
-          : b
-      );
-    }
-
-    setBookings(updated);
-    saveStoredBookings(updated);
-    if (selectedBooking?.id === extendModalBooking.id) {
-      if (isMoved) {
-        setSelectedBooking(null);
-      } else {
-        setSelectedBooking({
-          ...selectedBooking,
-          checkOutDate: newExtendCheckOut,
-          totalAmount: extendModalBooking.totalAmount + totalExtra,
-          balance: (extendModalBooking.balance ?? 0) + totalExtra,
+    try {
+      if (dbSynced) {
+        const res = await apiExtendBookingStay(extendModalBooking.id, {
+          newCheckOutDate: newExtendCheckOut,
+          roomNumber: extendSelectedRoom,
+          nightlyRate: ratePerNight,
         });
+        setBookings(getStoredBookings());
+        if (selectedBooking?.id === extendModalBooking.id) {
+          setSelectedBooking(res?.isMoved ? null : res?.booking || null);
+        }
+      } else {
+        let updated: TapeChartBooking[];
+        if (isMoved) {
+          const extBooking: TapeChartBooking = {
+            id: `bkg-ext-${Date.now()}`,
+            bookingNumber: `${extendModalBooking.bookingNumber}-EXT`,
+            source: extendModalBooking.source,
+            reservationType: extendModalBooking.reservationType || 'FIT',
+            guestName: extendModalBooking.guestName,
+            phone: extendModalBooking.phone,
+            idNumber: extendModalBooking.idNumber,
+            idType: extendModalBooking.idType,
+            roomNumber: extendSelectedRoom,
+            roomType: chosenRoom ? chosenRoom.type : 'Deluxe Room',
+            ratePlan: extendModalBooking.ratePlan,
+            checkInDate: extendModalBooking.checkOutDate,
+            checkOutDate: newExtendCheckOut,
+            status: extendModalBooking.checkOutDate <= today ? 'IN_HOUSE' : 'CONFIRMED',
+            totalAmount: totalExtra,
+            balance: totalExtra,
+            payments: [],
+            notes: `Perpanjangan Inap (Pindah dari Kamar ${extendModalBooking.roomNumber})`,
+          };
+          updated = [extBooking, ...bookings];
+        } else {
+          const newTotalAmount = extendModalBooking.totalAmount + totalExtra;
+          const currentBalance = extendModalBooking.balance ?? 0;
+          const newBalance = currentBalance + totalExtra;
+          updated = bookings.map((b) =>
+            b.id === extendModalBooking.id
+              ? {
+                  ...b,
+                  checkOutDate: newExtendCheckOut,
+                  totalAmount: newTotalAmount,
+                  balance: newBalance,
+                }
+              : b
+          );
+        }
+        setBookings(updated);
+        saveStoredBookings(updated);
+        if (selectedBooking?.id === extendModalBooking.id) {
+          if (isMoved) {
+            setSelectedBooking(null);
+          } else {
+            setSelectedBooking({
+              ...selectedBooking,
+              checkOutDate: newExtendCheckOut,
+              totalAmount: extendModalBooking.totalAmount + totalExtra,
+              balance: (extendModalBooking.balance ?? 0) + totalExtra,
+            });
+          }
+        }
       }
+      setExtendModalBooking(null);
+      triggerToast(
+        isMoved
+          ? `Extend & Pindah Kamar Berhasil! Tamu ${extendModalBooking.guestName} dibuatkan perpanjangan di Kamar ${extendSelectedRoom} (${chosenRoom?.type}) untuk ${extraNights} malam (${extendModalBooking.checkOutDate} s/d ${newExtendCheckOut}). Tagihan perpanjangan: ${formatCurrency(totalExtra)}.`
+          : `Extend Stay Berhasil! Tamu ${extendModalBooking.guestName} tetap di Kamar ${extendModalBooking.roomNumber} diperpanjang +${extraNights} malam s/d ${newExtendCheckOut}. Biaya bertambah ${formatCurrency(totalExtra)}.`
+      );
+    } catch (err: any) {
+      alert(err?.message || 'Gagal memperpanjang masa inap.');
     }
-    setExtendModalBooking(null);
-    triggerToast(
-      isMoved
-        ? `Extend & Pindah Kamar Berhasil! Tamu ${extendModalBooking.guestName} dibuatkan perpanjangan di Kamar ${extendSelectedRoom} (${chosenRoom?.type}) untuk ${extraNights} malam (${extendModalBooking.checkOutDate} s/d ${newExtendCheckOut}). Tagihan perpanjangan: ${formatCurrency(totalExtra)}.`
-        : `Extend Stay Berhasil! Tamu ${extendModalBooking.guestName} tetap di Kamar ${extendModalBooking.roomNumber} diperpanjang +${extraNights} malam s/d ${newExtendCheckOut}. Biaya bertambah ${formatCurrency(totalExtra)}.`
-    );
   };
 
   // Open Payment Modal
@@ -603,7 +687,7 @@ export default function FrontDeskReservasiPage() {
     setPayNotes('');
   };
 
-  const handleSavePayment = (e: React.FormEvent) => {
+  const handleSavePayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!paymentModalBooking) return;
     const cleanAmount = parseThousands(payAmount);
@@ -612,37 +696,52 @@ export default function FrontDeskReservasiPage() {
       return;
     }
 
-    const newPayment: PaymentRecord = {
-      id: `pay-${Date.now()}`,
-      amount: cleanAmount,
-      method: payMethod,
-      reference: payReference.trim() || undefined,
-      notes: payNotes.trim() || undefined,
-      date: today,
-    };
-
-    // Use centralized addPaymentToBooking helper which updates payments, balance and localStorage
-    const updated = addPaymentToBooking(paymentModalBooking.id, newPayment);
-    setBookings(updated);
-
-    const updatedBooking = updated.find((b) => b.id === paymentModalBooking.id);
-    if (updatedBooking) {
-      if (selectedBooking?.id === updatedBooking.id) {
-        setSelectedBooking(updatedBooking);
+    try {
+      let updatedBooking: TapeChartBooking | undefined;
+      if (dbSynced) {
+        const res = await apiRecordBookingPayment(paymentModalBooking.id, {
+          amount: cleanAmount,
+          method: payMethod,
+          reference: payReference.trim() || undefined,
+          notes: payNotes.trim() || undefined,
+          date: today,
+        });
+        setBookings(getStoredBookings());
+        updatedBooking = res || undefined;
+      } else {
+        const newPayment: PaymentRecord = {
+          id: `pay-${Date.now()}`,
+          amount: cleanAmount,
+          method: payMethod,
+          reference: payReference.trim() || undefined,
+          notes: payNotes.trim() || undefined,
+          date: today,
+        };
+        const updated = addPaymentToBooking(paymentModalBooking.id, newPayment);
+        setBookings(updated);
+        updatedBooking = updated.find((b) => b.id === paymentModalBooking.id);
       }
-      const newBal = calculateBookingBalance(updatedBooking);
-      triggerToast(
-        `Pembayaran ${formatCurrency(cleanAmount)} (${getPaymentMethodLabel(payMethod)}) untuk tamu ${updatedBooking.guestName} berhasil dicatat! Sisa saldo: ${formatCurrency(newBal)}.`
-      );
+
+      if (updatedBooking) {
+        if (selectedBooking?.id === updatedBooking.id) {
+          setSelectedBooking(updatedBooking);
+        }
+        const newBal = calculateBookingBalance(updatedBooking);
+        triggerToast(
+          `Pembayaran ${formatCurrency(cleanAmount)} (${getPaymentMethodLabel(payMethod)}) untuk tamu ${updatedBooking.guestName} berhasil dicatat! Sisa saldo: ${formatCurrency(newBal)}.`
+        );
+      }
+      setPaymentModalBooking(null);
+    } catch (err: any) {
+      alert(err?.message || 'Gagal mencatat pembayaran.');
     }
-    setPaymentModalBooking(null);
   };
 
   return (
     <div className="space-y-6 max-w-[1600px] mx-auto pb-12">
       {/* Toast Notification */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3 p-4 bg-foreground text-background rounded-2xl shadow-2xl text-xs font-semibold animate-in fade-in slide-in-from-bottom-3 max-w-md">
+        <div className="fixed bottom-6 right-6 z-[80] flex items-center gap-3 p-4 bg-foreground text-background rounded-2xl shadow-2xl text-xs font-semibold animate-in fade-in slide-in-from-bottom-3 max-w-md">
           <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0" />
           <span className="flex-1">{toastMessage}</span>
           <button onClick={() => setToastMessage(null)} className="p-1 hover:bg-background/20 rounded-lg">
@@ -1345,7 +1444,7 @@ export default function FrontDeskReservasiPage() {
                 type="button"
                 onClick={() => {
                   setResTimeFrame('FIT');
-                  const nextDay = '2026-11-25';
+                  const nextDay = addDaysIso(today, 1);
                   setFormCheckIn(nextDay);
                   const afterDay = new Date(nextDay);
                   afterDay.setDate(afterDay.getDate() + 2);
@@ -1652,7 +1751,7 @@ export default function FrontDeskReservasiPage() {
       {/* MODAL 2: EXTEND STAY (PERPANJANG INAP)                                     */}
       {/* ========================================================================= */}
       {extendModalBooking && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
           <div className="w-full max-w-md bg-card border border-border rounded-2xl shadow-2xl p-6 space-y-4 text-xs animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="flex items-center gap-2">
@@ -1866,7 +1965,7 @@ export default function FrontDeskReservasiPage() {
       {/* MODAL 3: KELOLA PEMBAYARAN (KAPANPUN SEBELUM CHECKOUT)                     */}
       {/* ========================================================================= */}
       {paymentModalBooking && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
           <div className="w-full max-w-lg bg-card border border-border rounded-2xl shadow-2xl p-6 space-y-4 text-xs animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-border pb-3">
               <div className="flex items-center gap-2">
@@ -2032,7 +2131,7 @@ export default function FrontDeskReservasiPage() {
       {/* MODAL 4: CETAK NOTA / GUEST FOLIO RESMI DENGAN LOGO HOTEL                 */}
       {/* ========================================================================= */}
       {printFolioBooking && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
           <div className="w-full max-w-lg bg-card border border-border rounded-2xl shadow-2xl p-6 space-y-4 text-xs animate-in zoom-in-95 duration-150">
             {/* Header Dialog */}
             <div className="flex items-center justify-between border-b border-border pb-3">

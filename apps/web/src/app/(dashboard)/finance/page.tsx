@@ -24,18 +24,21 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { useI18n } from '../../../providers/intl-provider';
+import { useAuth } from '../../../providers/auth-provider';
 import { formatCurrency } from '../../../lib/utils';
 import {
   OTASettlementTransaction,
   getStoredOTATransactions,
   saveStoredOTATransactions,
   settleOTATransaction,
+  apiSettleOTATransactions,
   initialOTATransactions,
 } from '../../../lib/finance-store';
 import { getHotelSettings, HotelSettings } from '../../../lib/settings-store';
 
 export default function FinanceOTASettlementPage() {
   const { t } = useI18n();
+  const { dbSynced } = useAuth();
 
   // Transactions State
   const [transactions, setTransactions] = useState<OTASettlementTransaction[]>(initialOTATransactions);
@@ -101,42 +104,58 @@ export default function FinanceOTASettlementPage() {
   }, [transactions]);
 
   // Single Settlement Action from Grid Button
-  const handleSettleSingle = (tx: OTASettlementTransaction) => {
-    const updated = settleOTATransaction(tx.id);
-    setTransactions(updated);
-    triggerToast(
-      `Settlement Berhasil! Transaksi ${tx.otaBookingCode} (${tx.otaChannel} - ${tx.guestName}) sebesar ${formatCurrency(tx.netPayout)} telah diselesaikan & terkreditkan.`
-    );
+  const handleSettleSingle = async (tx: OTASettlementTransaction) => {
+    try {
+      const apiUpdated = dbSynced ? await apiSettleOTATransactions([tx.id]) : null;
+      const updated = apiUpdated || settleOTATransaction(tx.id);
+      setTransactions(updated);
+      triggerToast(
+        `Settlement Berhasil! Transaksi ${tx.otaBookingCode} (${tx.otaChannel} - ${tx.guestName}) sebesar ${formatCurrency(tx.netPayout)} telah diselesaikan & terkreditkan.`
+      );
+    } catch (err: any) {
+      alert(err?.message || 'Gagal memproses settlement.');
+    }
   };
 
   // Batch Settle for Selected Items
-  const handleBatchSettle = () => {
+  const handleBatchSettle = async () => {
     if (selectedTxIds.length === 0) return;
-    const current = getStoredOTATransactions();
-    const dateStr = new Date().toLocaleString('id-ID', {
-      timeZone: 'Asia/Jakarta',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    }) + ' WIB';
+    const count = selectedTxIds.length;
+    try {
+      const batchRef = `BATCH-SETTLE-${Math.floor(100000 + Math.random() * 900000)}`;
+      const apiUpdated = dbSynced ? await apiSettleOTATransactions(selectedTxIds, batchRef) : null;
+      if (apiUpdated) {
+        setTransactions(apiUpdated);
+      } else {
+        const current = getStoredOTATransactions();
+        const dateStr = new Date().toLocaleString('id-ID', {
+          timeZone: 'Asia/Jakarta',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+        }) + ' WIB';
 
-    const updated = current.map((tx) =>
-      selectedTxIds.includes(tx.id)
-        ? {
-            ...tx,
-            status: 'SETTLED' as const,
-            settledAt: dateStr,
-            settlementReference: `BATCH-SETTLE-${Math.floor(100000 + Math.random() * 900000)}`,
-          }
-        : tx
-    );
+        const updated = current.map((tx) =>
+          selectedTxIds.includes(tx.id)
+            ? {
+                ...tx,
+                status: 'SETTLED' as const,
+                settledAt: dateStr,
+                settlementReference: batchRef,
+              }
+            : tx
+        );
 
-    saveStoredOTATransactions(updated);
-    setTransactions(updated);
-    setSelectedTxIds([]);
-    triggerToast(`Berhasil menyelesaikan ${selectedTxIds.length} transaksi OTA sekaligus!`);
+        saveStoredOTATransactions(updated);
+        setTransactions(updated);
+      }
+      setSelectedTxIds([]);
+      triggerToast(`Berhasil menyelesaikan ${count} transaksi OTA sekaligus!`);
+    } catch (err: any) {
+      alert(err?.message || 'Gagal memproses batch settlement.');
+    }
   };
 
   const toggleSelectTx = (id: string) => {

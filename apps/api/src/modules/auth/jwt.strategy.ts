@@ -2,6 +2,7 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PassportStrategy } from '@nestjs/passport';
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { UserPayload } from '@hospitality/shared-types';
+import { getJwtAccessSecret } from '../../common/config/security.config.js';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -9,12 +10,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: process.env.JWT_ACCESS_SECRET || 'super-secret-jwt-access-key-change-in-production-2026',
+      secretOrKey: getJwtAccessSecret(),
     });
   }
 
   async validate(payload: UserPayload): Promise<UserPayload> {
-    if (!payload.sub || !payload.email) {
+    if (!payload.sub || !payload.email || !payload.propertyId) {
       throw new UnauthorizedException('Invalid token payload');
     }
     return payload;

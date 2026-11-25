@@ -3,6 +3,43 @@ import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
 import { prisma } from '@hospitality/database';
 
+const SENSITIVE_KEYS = new Set([
+  'password',
+  'passwordhash',
+  'newpassword',
+  'currentpassword',
+  'refreshtoken',
+  'accesstoken',
+  'token',
+  'secret',
+  'credentials',
+  'credentialsencrypted',
+  'logourl',
+]);
+
+function redactSensitive(value: unknown, depth = 0): unknown {
+  if (value === null || value === undefined) return value;
+  if (depth > 4) return '[TRUNCATED]';
+  if (typeof value === 'string') {
+    return value.length > 500 ? `${value.slice(0, 120)}...[TRUNCATED ${value.length} chars]` : value;
+  }
+  if (Array.isArray(value)) {
+    return value.slice(0, 20).map((item) => redactSensitive(item, depth + 1));
+  }
+  if (typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (SENSITIVE_KEYS.has(k.toLowerCase())) {
+        out[k] = '[REDACTED]';
+      } else {
+        out[k] = redactSensitive(v, depth + 1);
+      }
+    }
+    return out;
+  }
+  return value;
+}
+
 @Injectable()
 export class AuditLogInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
@@ -31,8 +68,8 @@ export class AuditLogInterceptor implements NestInterceptor {
               action: `${method} ${path}`,
               entityType: 'HTTP_REQUEST',
               entityId: path,
-              oldValues: request.body ? (request.body as object) : undefined,
-              newValues: responseBody ? (responseBody as object) : undefined,
+              oldValues: request.body ? (redactSensitive(request.body) as object) : undefined,
+              newValues: responseBody ? (redactSensitive(responseBody) as object) : undefined,
               ipAddress,
               userAgent,
             },

@@ -24,7 +24,24 @@ export class GlobalHttpExceptionFilter implements ExceptionFilter {
         details = r.details || undefined;
       }
     } else if (exception instanceof Error) {
-      message = exception.message;
+      const raw = exception.message || '';
+      if (
+        raw.includes('DATABASE_URL') ||
+        raw.includes('Authentication failed against database server') ||
+        raw.includes("Can't reach database server") ||
+        raw.includes('does not exist on the database server')
+      ) {
+        status = HttpStatus.SERVICE_UNAVAILABLE;
+        errorCode = 'DATABASE_UNAVAILABLE';
+        message =
+          'Database PostgreSQL belum siap atau belum terhubung. Periksa file .env (DATABASE_URL) dan pastikan migrasi Prisma sudah dijalankan.';
+        console.error('[DB Error]', raw);
+      } else {
+        message =
+          process.env.NODE_ENV === 'production'
+            ? 'Terjadi kesalahan pada server.'
+            : raw;
+      }
     }
 
     response.status(status).json({

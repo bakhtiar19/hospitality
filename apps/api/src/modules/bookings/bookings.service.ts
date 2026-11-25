@@ -52,7 +52,7 @@ export class BookingsService {
       throw new BadRequestException('Stay duration must be at least 1 night');
     }
 
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       // 0. Check duplicate OTA reservation ID (Idempotent OTA intake)
       if (dto.channelReference) {
         const existing = await tx.booking.findFirst({
@@ -301,7 +301,7 @@ export class BookingsService {
    * Room Move & Reassignment (Drag & Drop on Tape Chart)
    */
   async moveRoom(propertyId: string, dto: MoveRoomDto) {
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const bookingRoom = await tx.bookingRoom.findUnique({
         where: { id: dto.bookingRoomId },
         include: { booking: true },
@@ -350,7 +350,7 @@ export class BookingsService {
    * Cancels a booking and restores inventory ledger counts
    */
   async cancelBooking(propertyId: string, bookingId: string, reason?: string) {
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const booking = await tx.booking.findFirst({
         where: { id: bookingId, propertyId },
         include: { bookingRooms: true },

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
 import {
   Calendar,
@@ -36,7 +36,8 @@ import {
   AlertTriangle,
   X,
 } from 'lucide-react';
-import { formatCurrency } from '../../../../lib/utils';
+import { formatCurrency, getTodayJakarta, addDaysIso } from '../../../../lib/utils';
+import { apiRequest } from '../../../../lib/api-client';
 import {
   TapeChartBooking,
   getStoredBookings,
@@ -109,15 +110,68 @@ const AVAILABLE_ROOMS: RoomSelection[] = [
 
 export default function PublicBookingEnginePage() {
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const [hotelBrand, setHotelBrand] = useState<{
+    hotelName: string;
+    address: string;
+    phone: string;
+    logoUrl?: string;
+  }>({
+    hotelName: 'Hotel Winotosastro AProject',
+    address: 'Jl. Brigjend Slamet Riyadi, Surakarta (Solo), Central Java',
+    phone: '+62 271 718899',
+  });
+  const [roomsList, setRoomsList] = useState<RoomSelection[]>(AVAILABLE_ROOMS);
 
-  // Search parameters (Default to today's PMS business date for immediate testability)
-  const [checkIn, setCheckIn] = useState('2026-11-24');
-  const [checkOut, setCheckOut] = useState('2026-11-26');
+  // Search parameters (Real-Time Jakarta Date)
+  const [checkIn, setCheckIn] = useState(() => getTodayJakarta());
+  const [checkOut, setCheckOut] = useState(() => addDaysIso(getTodayJakarta(), 2));
   const [adults, setAdults] = useState(2);
   const [children, setChildren] = useState(0);
 
   // Selected room & add-ons
-  const [selectedRoom, setSelectedRoom] = useState<RoomSelection>(AVAILABLE_ROOMS[1]); // Deluxe default
+  const [selectedRoom, setSelectedRoom] = useState<RoomSelection>(AVAILABLE_ROOMS[1]);
+
+  useEffect(() => {
+    const slug =
+      typeof window !== 'undefined'
+        ? window.location.pathname.split('/').filter(Boolean).pop() || 'winotosastro'
+        : 'winotosastro';
+
+    apiRequest<{
+      hotelName: string;
+      address: string;
+      city: string;
+      phone: string;
+      logoUrl?: string;
+      roomTypes: Array<{ code: string; name: string; baseRate: number; maxCapacity: number }>;
+    }>(`/public/hotels/${slug}`, { skipAuth: true })
+      .then((info) => {
+        if (!info?.hotelName) return;
+        setHotelBrand({
+          hotelName: info.hotelName,
+          address: info.address || info.city,
+          phone: info.phone,
+          logoUrl: info.logoUrl,
+        });
+        if (Array.isArray(info.roomTypes) && info.roomTypes.length > 0) {
+          const mapped: RoomSelection[] = info.roomTypes.map((rt, idx) => ({
+            id: rt.code,
+            name: rt.name,
+            size: '28 m²',
+            bed: `${rt.maxCapacity || 2} Guests Max`,
+            amenities: ['Free High-Speed Wi-Fi', 'Smart TV', 'AC', 'Hot Shower'],
+            basePrice: rt.baseRate || 650000,
+            selectedRatePlan: 'BB',
+            bbAddon: 100000,
+            roomNumber: `${idx + 1}01`,
+            floor: `Lantai ${idx + 1}`,
+          }));
+          setRoomsList(mapped);
+          setSelectedRoom(mapped[0]);
+        }
+      })
+      .catch(() => {});
+  }, []);
   const [rateType, setRateType] = useState<'RO' | 'BB'>('BB');
   const [addonAirport, setAddonAirport] = useState(false);
   const [addonExtraBed, setAddonExtraBed] = useState(false);
@@ -158,7 +212,7 @@ export default function PublicBookingEnginePage() {
           ? {
               ...b,
               status: 'CHECKED_OUT' as const,
-              checkOutDate: '2026-11-24', // Diset ke tanggal hari ini
+              checkOutDate: getTodayJakarta(), // Diset ke tanggal hari ini
             }
           : b
       );
@@ -191,52 +245,83 @@ export default function PublicBookingEnginePage() {
   const serviceCharge = Math.round(taxableBase * 0.1);
   const grandTotal = taxableBase + pbjtTax + serviceCharge;
 
-  // Simulate Instant Midtrans Payment & Direct PMS Synchronization
-  const handlePayNow = () => {
+  // Simulate Instant Midtrans Payment & Direct PostgreSQL / PMS Synchronization
+  const handlePayNow = async () => {
     setIsProcessingPayment(true);
-    setTimeout(() => {
-      const bookingNo = `BK-WIN-${Math.floor(100000 + Math.random() * 900000)}`;
-      const trxId = `TRX-MID-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(10000 + Math.random() * 90000)}`;
-      const pin = `*${Math.floor(100000 + Math.random() * 900000)}#`;
-      const nowStr = new Date().toLocaleDateString('id-ID', {
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric',
-      }) + `, ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB`;
+    const slug =
+      typeof window !== 'undefined'
+        ? window.location.pathname.split('/').filter(Boolean).pop() || 'winotosastro'
+        : 'winotosastro';
 
-      setConfirmedBookingNumber(bookingNo);
-      setMidtransTrxId(trxId);
-      setDoorLockPin(pin);
-      setPaidTimestamp(nowStr);
+    let bookingNo = `BK-WIN-${Math.floor(100000 + Math.random() * 900000)}`;
+    const trxId = `TRX-MID-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(10000 + Math.random() * 90000)}`;
+    let pin = `*${Math.floor(100000 + Math.random() * 900000)}#`;
+    let assignedRoomNo = selectedRoom.roomNumber;
 
-      // Save directly into Hotel Winotosastro PMS Bookings Store
-      try {
-        const currentList = getStoredBookings();
-        const newRecord: TapeChartBooking = {
-          id: `b-${Date.now()}`,
-          bookingNumber: bookingNo,
-          source: 'DIRECT',
-          guestName: `${guestFirstName} ${guestLastName}`.trim(),
-          phone: guestPhone,
-          roomNumber: selectedRoom.roomNumber,
-          roomType: selectedRoom.name,
-          ratePlan: rateType === 'BB' ? 'Bed & Breakfast' : 'Room Only',
+    try {
+      const apiRes = await apiRequest<{
+        bookingNumber: string;
+        roomNumber: string;
+        doorPin: string;
+      }>(`/public/hotels/${slug}/book`, {
+        method: 'POST',
+        skipAuth: true,
+        body: JSON.stringify({
+          roomTypeCode: selectedRoom.name,
           checkInDate: checkIn,
           checkOutDate: checkOut,
-          status: 'CONFIRMED',
-          totalAmount: grandTotal,
-          balance: 0, // Fully Paid!
-          idNumber: '3372' + Math.floor(100000000000 + Math.random() * 900000000000),
-        };
-        saveStoredBookings([newRecord, ...currentList]);
-      } catch (err) {
-        console.error('Failed to sync booking to PMS store:', err);
-      }
+          guests: Number(adults) || 2,
+          guestName: `${guestFirstName} ${guestLastName}`.trim(),
+          email: guestEmail || undefined,
+          phone: guestPhone,
+          paymentMethod: paymentMethod || 'QRIS',
+          paymentReference: trxId,
+        }),
+      });
+      if (apiRes?.bookingNumber) bookingNo = apiRes.bookingNumber;
+      if (apiRes?.roomNumber) assignedRoomNo = apiRes.roomNumber;
+      if (apiRes?.doorPin) pin = `*${apiRes.doorPin}#`;
+    } catch {
+      // Fallback to local store when backend DB is offline
+    }
 
-      setIsProcessingPayment(false);
-      setBookingConfirmed(true);
-      setStep(4);
-    }, 1200);
+    const nowStr = new Date().toLocaleDateString('id-ID', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    }) + `, ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB`;
+
+    setConfirmedBookingNumber(bookingNo);
+    setMidtransTrxId(trxId);
+    setDoorLockPin(pin);
+    setPaidTimestamp(nowStr);
+
+    try {
+      const currentList = getStoredBookings();
+      const newRecord: TapeChartBooking = {
+        id: `b-${Date.now()}`,
+        bookingNumber: bookingNo,
+        source: 'DIRECT',
+        guestName: `${guestFirstName} ${guestLastName}`.trim(),
+        phone: guestPhone,
+        roomNumber: assignedRoomNo,
+        roomType: selectedRoom.name,
+        ratePlan: rateType === 'BB' ? 'Bed & Breakfast' : 'Room Only',
+        checkInDate: checkIn,
+        checkOutDate: checkOut,
+        status: 'CONFIRMED',
+        totalAmount: grandTotal,
+        balance: 0,
+        idNumber: '3372' + Math.floor(100000000000 + Math.random() * 900000000000),
+      };
+      saveStoredBookings([newRecord, ...currentList]);
+    } catch (err) {
+      console.error('Failed to sync booking to PMS store:', err);
+    }
+
+    setIsProcessingPayment(false);
+    setBookingConfirmed(true);
+    setStep(4);
   };
 
   // Simulate Smart Lock Door Unlock
@@ -316,14 +401,14 @@ Terima kasih atas kunjungan Anda!`;
             </div>
             <div>
               <h1 className="text-base font-extrabold tracking-tight text-foreground flex items-center gap-1.5">
-                Hotel Winotosastro AProject
+                {hotelBrand.hotelName}
                 <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-bold border border-emerald-500/20">
                   Direct Booking Guarantee
                 </span>
               </h1>
               <p className="text-[11px] text-muted-foreground flex items-center gap-1">
                 <MapPin className="w-3 h-3 text-muted-foreground" />
-                Jl. Brigjend Slamet Riyadi, Surakarta (Solo), Central Java
+                {hotelBrand.address}
               </p>
             </div>
           </div>
@@ -421,12 +506,12 @@ Terima kasih atas kunjungan Anda!`;
             {/* Room Type Cards */}
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <h2 className="text-lg font-bold text-foreground">Available Room Types ({AVAILABLE_ROOMS.length})</h2>
+                <h2 className="text-lg font-bold text-foreground">Available Room Types ({roomsList.length})</h2>
                 <span className="text-xs text-muted-foreground font-medium">Periode: {checkIn} s/d {checkOut} ({nights} malam)</span>
               </div>
 
               <div className="grid grid-cols-1 gap-4">
-                {AVAILABLE_ROOMS.map((room) => {
+                {roomsList.map((room) => {
                   const isSelected = selectedRoom.id === room.id;
                   const priceRO = room.basePrice;
                   const priceBB = room.basePrice + room.bbAddon;

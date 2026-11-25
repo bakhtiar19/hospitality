@@ -1,62 +1,85 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  Sparkles,
   CheckCircle2,
   AlertTriangle,
   Clock,
-  Filter,
-  User,
-  Smartphone,
   Layers,
   Wrench,
-  Search,
-  Check,
+  RefreshCw,
 } from 'lucide-react';
-import { useI18n } from '../../../providers/intl-provider';
+import { useAuth } from '../../../providers/auth-provider';
+import { apiRequest } from '../../../lib/api-client';
 
 interface RoomHK {
+  id: string;
   number: string;
   floor: number;
   type: string;
   status: 'CLEAN' | 'DIRTY' | 'INSPECTED' | 'OUT_OF_ORDER';
   assignedTo?: string;
-  lastCleaned?: string;
 }
 
-const initialRooms: RoomHK[] = [
-  { number: '101', floor: 1, type: 'Superior', status: 'CLEAN', assignedTo: 'Budi (Attendant)' },
-  { number: '102', floor: 1, type: 'Superior', status: 'CLEAN', assignedTo: 'Budi (Attendant)' },
-  { number: '103', floor: 1, type: 'Superior', status: 'DIRTY', assignedTo: 'Budi (Attendant)' },
-  { number: '104', floor: 1, type: 'Superior', status: 'INSPECTED', assignedTo: 'Rian (Supervisor)' },
-  { number: '105', floor: 1, type: 'Superior', status: 'CLEAN', assignedTo: 'Budi (Attendant)' },
-  { number: '201', floor: 2, type: 'Deluxe King', status: 'CLEAN', assignedTo: 'Siti (Attendant)' },
-  { number: '202', floor: 2, type: 'Deluxe King', status: 'DIRTY', assignedTo: 'Siti (Attendant)' },
-  { number: '203', floor: 2, type: 'Deluxe King', status: 'CLEAN', assignedTo: 'Siti (Attendant)' },
-  { number: '204', floor: 2, type: 'Deluxe King', status: 'OUT_OF_ORDER', assignedTo: 'Maintenance (AC Repair)' },
-  { number: '301', floor: 3, type: 'Deluxe King', status: 'CLEAN', assignedTo: 'Agus (Attendant)' },
-  { number: '401', floor: 4, type: 'Executive Suite', status: 'INSPECTED', assignedTo: 'Rian (Supervisor)' },
-  { number: '407', floor: 4, type: 'Family Suite', status: 'CLEAN', assignedTo: 'Agus (Attendant)' },
-];
-
 export default function HousekeepingPage() {
-  const { t } = useI18n();
-  const [rooms, setRooms] = useState<RoomHK[]>(initialRooms);
+  const { dbSynced, refreshBootstrap } = useAuth();
+  const [rooms, setRooms] = useState<RoomHK[]>([]);
   const [filterFloor, setFilterFloor] = useState<number | 'ALL'>('ALL');
+  const [loading, setLoading] = useState(true);
+  const [savingId, setSavingId] = useState<string | null>(null);
 
-  const toggleStatus = (roomNum: string) => {
-    setRooms((prev) =>
-      prev.map((r) => {
-        if (r.number !== roomNum) return r;
-        if (r.status === 'DIRTY') return { ...r, status: 'CLEAN' };
-        if (r.status === 'CLEAN') return { ...r, status: 'INSPECTED' };
-        if (r.status === 'INSPECTED') return { ...r, status: 'DIRTY' };
-        return r;
-      })
-    );
+  const loadRooms = async () => {
+    if (!dbSynced) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const data = await apiRequest<RoomHK[]>('/pms/housekeeping');
+      setRooms(data || []);
+    } catch (err) {
+      console.error('Failed to load housekeeping rooms', err);
+    } finally {
+      setLoading(false);
+    }
   };
 
+  useEffect(() => {
+    loadRooms();
+  }, [dbSynced]);
+
+  const updateRoomStatus = async (
+    room: RoomHK,
+    nextStatus: 'CLEAN' | 'DIRTY' | 'INSPECTED' | 'OUT_OF_ORDER'
+  ) => {
+    setSavingId(room.id);
+    try {
+      const updated = await apiRequest<RoomHK>(`/pms/housekeeping/rooms/${room.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: nextStatus }),
+      });
+      setRooms((prev) => prev.map((r) => (r.id === room.id ? updated : r)));
+      await refreshBootstrap();
+    } catch (err: any) {
+      alert(err?.message || 'Gagal memperbarui status kamar.');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const cycleStatus = (room: RoomHK) => {
+    const next =
+      room.status === 'DIRTY'
+        ? 'CLEAN'
+        : room.status === 'CLEAN'
+        ? 'INSPECTED'
+        : room.status === 'INSPECTED'
+        ? 'DIRTY'
+        : 'CLEAN';
+    updateRoomStatus(room, next);
+  };
+
+  const floors = Array.from(new Set(rooms.map((r) => r.floor))).sort((a, b) => a - b);
   const filtered = rooms.filter((r) => filterFloor === 'ALL' || r.floor === filterFloor);
 
   return (
@@ -66,19 +89,26 @@ export default function HousekeepingPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
             Housekeeping Board & Tasks
-            <span className="text-xs px-2.5 py-0.5 rounded-full bg-primary/10 text-primary font-bold">
-              Room Cleanliness
+            <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-bold">
+              PostgreSQL Live
             </span>
           </h1>
           <p className="text-sm text-muted-foreground">
-            Real-time room cleanliness tracking, attendant task assignments, and mobile touch updates.
+            Status kebersihan kamar real-time tersimpan ke database (klik kartu untuk ubah status DIRTY → CLEAN → INSPECTED).
           </p>
         </div>
 
         {/* Floor Filter */}
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-muted-foreground">Floor:</span>
-          {(['ALL', 1, 2, 3, 4] as const).map((fl) => (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={loadRooms}
+            className="px-2.5 py-1 text-xs font-semibold rounded-lg border border-border bg-card hover:bg-muted flex items-center gap-1"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+          <span className="text-xs font-semibold text-muted-foreground ml-1">Lantai:</span>
+          {(['ALL', ...floors] as const).map((fl) => (
             <button
               key={fl}
               onClick={() => setFilterFloor(fl)}
@@ -88,7 +118,7 @@ export default function HousekeepingPage() {
                   : 'bg-card border-border text-muted-foreground hover:text-foreground'
               }`}
             >
-              {fl === 'ALL' ? 'All Floors' : `Lt ${fl}`}
+              {fl === 'ALL' ? 'Semua' : `Lt ${fl}`}
             </button>
           ))}
         </div>
@@ -121,72 +151,92 @@ export default function HousekeepingPage() {
         </div>
 
         <div className="p-4 bg-card border border-border rounded-xl shadow-xs flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-indigo-500/10 text-indigo-600 flex items-center justify-center font-bold">
-            <Sparkles className="w-5 h-5" />
+          <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-600 flex items-center justify-center font-bold">
+            <Layers className="w-5 h-5" />
           </div>
           <div>
-            <div className="text-xs text-muted-foreground font-medium">Inspected Rooms</div>
-            <div className="text-xl font-bold text-indigo-600">
+            <div className="text-xs text-muted-foreground font-medium">Inspected</div>
+            <div className="text-xl font-bold text-blue-600">
               {rooms.filter((r) => r.status === 'INSPECTED').length}
             </div>
           </div>
         </div>
 
         <div className="p-4 bg-card border border-border rounded-xl shadow-xs flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-rose-500/10 text-rose-600 flex items-center justify-center font-bold">
-            <Wrench className="w-5 h-5" />
+          <div className="w-10 h-10 rounded-xl bg-destructive/10 text-destructive flex items-center justify-center font-bold">
+            <AlertTriangle className="w-5 h-5" />
           </div>
           <div>
-            <div className="text-xs text-muted-foreground font-medium">Out of Order (OOO)</div>
-            <div className="text-xl font-bold text-rose-600">
+            <div className="text-xs text-muted-foreground font-medium">Out of Order</div>
+            <div className="text-xl font-bold text-destructive">
               {rooms.filter((r) => r.status === 'OUT_OF_ORDER').length}
             </div>
           </div>
         </div>
       </div>
 
-      {/* Room Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-        {filtered.map((r) => {
-          const statusColors = {
-            CLEAN: 'border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-400',
-            DIRTY: 'border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-400',
-            INSPECTED: 'border-indigo-500/40 bg-indigo-500/5 text-indigo-700 dark:text-indigo-400',
-            OUT_OF_ORDER: 'border-rose-500/40 bg-rose-500/5 text-rose-700 dark:text-rose-400',
-          };
-
-          return (
+      {/* Room Cards Grid */}
+      {loading ? (
+        <div className="p-10 text-center text-xs text-muted-foreground bg-card border border-border rounded-xl">
+          Memuat daftar kamar dari PostgreSQL...
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          {filtered.map((r) => (
             <div
-              key={r.number}
-              className={`p-4 rounded-xl border shadow-xs space-y-3 bg-card transition-all ${statusColors[r.status]}`}
+              key={r.id}
+              onClick={() => cycleStatus(r)}
+              className={`p-4 bg-card border rounded-xl shadow-xs cursor-pointer transition-all hover:shadow-md flex flex-col justify-between space-y-3 ${
+                r.status === 'DIRTY'
+                  ? 'border-amber-500/40 bg-amber-500/5'
+                  : r.status === 'OUT_OF_ORDER'
+                  ? 'border-destructive/40 bg-destructive/5'
+                  : r.status === 'INSPECTED'
+                  ? 'border-blue-500/40 bg-blue-500/5'
+                  : 'border-emerald-500/30 hover:border-primary'
+              } ${savingId === r.id ? 'opacity-60 pointer-events-none' : ''}`}
             >
               <div className="flex items-start justify-between">
                 <div>
-                  <span className="font-mono font-bold text-lg text-foreground">Room {r.number}</span>
-                  <div className="text-xs text-muted-foreground">{r.type} • Lt {r.floor}</div>
+                  <div className="text-lg font-black font-mono text-foreground">Kamar {r.number}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {r.type} • Lt {r.floor}
+                  </div>
                 </div>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold border uppercase tracking-wider">
+                <span
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
+                    r.status === 'CLEAN'
+                      ? 'bg-emerald-500 text-white'
+                      : r.status === 'DIRTY'
+                      ? 'bg-amber-500 text-white'
+                      : r.status === 'INSPECTED'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-destructive text-white'
+                  }`}
+                >
                   {r.status}
                 </span>
               </div>
 
-              <div className="text-xs text-muted-foreground flex items-center gap-1.5">
-                <User className="w-3.5 h-3.5" />
-                <span className="truncate">{r.assignedTo || 'Unassigned'}</span>
-              </div>
-
-              <div className="pt-2 border-t border-border/60 flex items-center justify-between">
+              <div className="flex items-center justify-between pt-2 border-t border-border/50 text-[11px]">
+                <span className="text-muted-foreground">Klik untuk ubah status</span>
                 <button
-                  onClick={() => toggleStatus(r.number)}
-                  className="w-full py-1.5 text-xs font-bold rounded-lg bg-card border border-border hover:bg-muted text-foreground transition-colors shadow-2xs"
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    updateRoomStatus(r, r.status === 'OUT_OF_ORDER' ? 'CLEAN' : 'OUT_OF_ORDER');
+                  }}
+                  className="px-2 py-1 rounded bg-muted hover:bg-muted/80 font-semibold flex items-center gap-1 text-muted-foreground hover:text-foreground"
+                  title="Tandai Maintenance / Out of Order"
                 >
-                  Toggle Clean / Inspect
+                  <Wrench className="w-3 h-3" />
+                  {r.status === 'OUT_OF_ORDER' ? 'Aktifkan' : 'OOO'}
                 </button>
               </div>
             </div>
-          );
-        })}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -27,15 +27,20 @@ import {
   FileCheck,
 } from 'lucide-react';
 import { useI18n } from '../../../providers/intl-provider';
+import { useAuth } from '../../../providers/auth-provider';
+import { apiRequest } from '../../../lib/api-client';
 import { formatCurrency, formatThousands, parseThousands } from '../../../lib/utils';
 import {
   getHotelSettings,
   saveHotelSettings,
+  apiSaveHotelSettings,
+  compressHotelLogoFile,
   HotelSettings,
 } from '../../../lib/settings-store';
 
 export default function SettingsPage() {
   const { t } = useI18n();
+  const { dbSynced, refreshBootstrap } = useAuth();
   const [activeTab, setActiveTab] = useState<'property' | 'taxes' | 'roomTypes' | 'rooms' | 'ratePlans'>('property');
 
   // Hotel Branding & Settings State
@@ -50,7 +55,7 @@ export default function SettingsPage() {
     return () => window.removeEventListener('pms_settings_updated', handler);
   }, []);
 
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -59,102 +64,187 @@ export default function SettingsPage() {
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64 = reader.result as string;
-      const updated = saveHotelSettings({ logoUrl: base64 });
+    try {
+      const compressedBase64 = await compressHotelLogoFile(file);
+      const updated = await apiSaveHotelSettings({ logoUrl: compressedBase64 });
       setHotelSettings(updated);
-      setSaveSuccessMsg('Logo hotel berhasil diunggah! Logo ini sekarang otomatis digunakan untuk setiap print out nota/folio.');
+      setSaveSuccessMsg('Logo hotel terkompresi berhasil disimpan ke database! Otomatis digunakan untuk setiap print nota/folio.');
       setTimeout(() => setSaveSuccessMsg(null), 5000);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleRemoveLogo = () => {
-    if (confirm('Apakah Anda yakin ingin menghapus logo kustom dan kembali ke default?')) {
-      const updated = saveHotelSettings({ logoUrl: '' });
-      setHotelSettings(updated);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      setSaveSuccessMsg('Logo kustom berhasil dihapus.');
-      setTimeout(() => setSaveSuccessMsg(null), 4000);
+    } catch (err: any) {
+      alert(err?.message || 'Gagal mengunggah logo hotel.');
     }
   };
 
-  const handleSavePropertyInfo = (e: React.FormEvent) => {
-    e.preventDefault();
-    saveHotelSettings(hotelSettings);
-    setSaveSuccessMsg('Informasi profil hotel & branding berhasil disimpan!');
-    setTimeout(() => setSaveSuccessMsg(null), 4000);
+  const handleRemoveLogo = async () => {
+    if (confirm('Apakah Anda yakin ingin menghapus logo kustom dan kembali ke default?')) {
+      try {
+        const updated = await apiSaveHotelSettings({ logoUrl: '' });
+        setHotelSettings(updated);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        setSaveSuccessMsg('Logo kustom berhasil dihapus dari database.');
+        setTimeout(() => setSaveSuccessMsg(null), 4000);
+      } catch (err: any) {
+        alert(err?.message || 'Gagal menghapus logo hotel.');
+      }
+    }
   };
 
-  // Room Types State
-  const [roomTypes, setRoomTypes] = useState([
-    {
-      code: 'SUP-TWN',
-      name: 'Superior Room',
-      total: 15,
-      sqm: '24 m²',
-      occupancy: '2 Adults',
-      baseRate: 650000,
-      amenities: ['Wi-Fi', 'AC', 'TV 43"', 'Hot Shower', 'Safe'],
-    },
-    {
-      code: 'DLX-KNG',
-      name: 'Deluxe King',
-      total: 15,
-      sqm: '32 m²',
-      occupancy: '2-3 Adults',
-      baseRate: 880000,
-      amenities: ['Wi-Fi', 'AC', 'Smart TV 50"', 'City View', 'Bathtub'],
-    },
-    {
-      code: 'EXE-STE',
-      name: 'Executive Suite',
-      total: 6,
-      sqm: '48 m²',
-      occupancy: '2-4 Adults',
-      baseRate: 1450000,
-      amenities: ['Living Room', 'Espresso Machine', 'Bathtub', 'High Floor'],
-    },
-    {
-      code: 'FAM-STE',
-      name: 'Family Suite',
-      total: 4,
-      sqm: '60 m²',
-      occupancy: '4-5 Adults',
-      baseRate: 2100000,
-      amenities: ['2 Bedrooms', 'Kitchenette', 'Dining Area', '2 Bathrooms'],
-    },
-  ]);
+  const handleSavePropertyInfo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const updated = await apiSaveHotelSettings(hotelSettings);
+      setHotelSettings(updated);
+      setSaveSuccessMsg('Informasi profil hotel & branding berhasil disimpan ke PostgreSQL!');
+      setTimeout(() => setSaveSuccessMsg(null), 4000);
+    } catch (err: any) {
+      alert(err?.message || 'Gagal menyimpan pengaturan hotel.');
+    }
+  };
+
+  // Room Types, Physical Rooms & Rate Plans State (Synced with PostgreSQL)
+  const [roomTypes, setRoomTypes] = useState<Array<{
+    id?: string;
+    code: string;
+    name: string;
+    total: number;
+    sqm: string;
+    occupancy: string;
+    baseRate: number;
+    amenities: string[];
+  }>>([]);
+  const [physicalRooms, setPhysicalRooms] = useState<Array<{
+    id: string;
+    number: string;
+    roomTypeId: string;
+    type: string;
+    floor: number;
+    floorName: string;
+    operationalStatus: string;
+    housekeepingStatus: string;
+  }>>([]);
+  const [dbRatePlans, setDbRatePlans] = useState<Array<{
+    id: string;
+    code: string;
+    name: string;
+    description: string;
+  }>>([]);
+
+  const loadRoomSetup = async () => {
+    if (!dbSynced) return;
+    try {
+      const setup = await apiRequest<{
+        roomTypes: any[];
+        rooms: any[];
+        ratePlans: any[];
+      }>('/pms/room-setup');
+      setRoomTypes(
+        (setup.roomTypes || []).map((rt) => ({
+          id: rt.id,
+          code: rt.code,
+          name: rt.name,
+          total: rt.total || 0,
+          sqm: '28 m²',
+          occupancy: `2-${rt.maxOccupancy || 3} Adults`,
+          baseRate: rt.baseRate || 650000,
+          amenities: rt.amenities?.length ? rt.amenities : ['Wi-Fi', 'AC'],
+        }))
+      );
+      setPhysicalRooms(setup.rooms || []);
+      setDbRatePlans(setup.ratePlans || []);
+    } catch (err) {
+      console.error('Failed to load room setup from DB', err);
+    }
+  };
+
+  useEffect(() => {
+    loadRoomSetup();
+  }, [dbSynced]);
 
   const [isAddRoomTypeModalOpen, setIsAddRoomTypeModalOpen] = useState(false);
-  const [newRtCode, setNewRtCode] = useState('PRS-STE');
-  const [newRtName, setNewRtName] = useState('Presidential Suite');
+  const [newRtCode, setNewRtCode] = useState('');
+  const [newRtName, setNewRtName] = useState('');
   const [newRtTotal, setNewRtTotal] = useState(2);
-  const [newRtSqm, setNewRtSqm] = useState('85 m²');
-  const [newRtOccupancy, setNewRtOccupancy] = useState('2-4 Adults');
-  const [newRtBaseRate, setNewRtBaseRate] = useState(3500000);
-  const [newRtAmenities, setNewRtAmenities] = useState('Wi-Fi, Jacuzzi, Private Butler, City View, Espresso');
+  const [newRtSqm, setNewRtSqm] = useState('32 m²');
+  const [newRtOccupancy, setNewRtOccupancy] = useState('2-3 Adults');
+  const [newRtBaseRate, setNewRtBaseRate] = useState(950000);
+  const [newRtAmenities, setNewRtAmenities] = useState('Wi-Fi, AC, Smart TV, Coffee Maker');
+  const [newRtFloor, setNewRtFloor] = useState(1);
+  const [newRtStartNumber, setNewRtStartNumber] = useState(106);
   const [rtSuccessMessage, setRtSuccessMessage] = useState<string | null>(null);
 
-  const handleAddRoomType = (e: React.FormEvent) => {
+  // Add physical room form
+  const [newRoomNum, setNewRoomNum] = useState('');
+  const [newRoomTypeId, setNewRoomTypeId] = useState('');
+  const [newRoomFloor, setNewRoomFloor] = useState(1);
+
+  const handleAddRoomType = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newRtCode || !newRtName) return;
 
-    const newRoomType = {
-      code: newRtCode.toUpperCase().trim(),
-      name: newRtName.trim(),
-      total: Number(newRtTotal) || 1,
-      sqm: newRtSqm.trim(),
-      occupancy: newRtOccupancy.trim(),
-      baseRate: Number(newRtBaseRate) || 1000000,
-      amenities: newRtAmenities.split(',').map((a) => a.trim()).filter(Boolean),
-    };
+    try {
+      if (dbSynced) {
+        await apiRequest('/pms/room-types', {
+          method: 'POST',
+          body: JSON.stringify({
+            code: newRtCode.toUpperCase().trim(),
+            name: newRtName.trim(),
+            maxOccupancy: 3,
+            baseRate: Number(newRtBaseRate) || 750000,
+            amenities: newRtAmenities.split(',').map((a) => a.trim()).filter(Boolean),
+            generateUnits: Number(newRtTotal) || 0,
+            floorNumber: Number(newRtFloor) || 1,
+            startRoomNumber: Number(newRtStartNumber) || 101,
+          }),
+        });
+        await loadRoomSetup();
+        await refreshBootstrap();
+      }
+      setIsAddRoomTypeModalOpen(false);
+      setRtSuccessMessage(
+        `Tipe kamar "${newRtName.trim()}" (${newRtCode.toUpperCase()}) & ${newRtTotal} unit kamar berhasil disimpan ke PostgreSQL!`
+      );
+      setNewRtCode('');
+      setNewRtName('');
+      setTimeout(() => setRtSuccessMessage(null), 5000);
+    } catch (err: any) {
+      alert(err?.message || 'Gagal menyimpan tipe kamar.');
+    }
+  };
 
-    setRoomTypes((prev) => [...prev, newRoomType]);
-    setIsAddRoomTypeModalOpen(false);
-    setRtSuccessMessage(`Tipe kamar "${newRoomType.name}" (${newRoomType.code}) berhasil ditambahkan ke inventaris!`);
-    setTimeout(() => setRtSuccessMessage(null), 5000);
+  const handleAddPhysicalRoom = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const targetTypeId = newRoomTypeId || roomTypes[0]?.id;
+    if (!newRoomNum.trim() || !targetTypeId) return;
+    try {
+      await apiRequest('/pms/rooms', {
+        method: 'POST',
+        body: JSON.stringify({
+          roomNumber: newRoomNum.trim(),
+          roomTypeId: targetTypeId,
+          floorNumber: Number(newRoomFloor) || 1,
+        }),
+      });
+      setNewRoomNum('');
+      await loadRoomSetup();
+      await refreshBootstrap();
+      setSaveSuccessMsg(`Kamar ${newRoomNum.trim()} berhasil ditambahkan ke PostgreSQL!`);
+      setTimeout(() => setSaveSuccessMsg(null), 4000);
+    } catch (err: any) {
+      alert(err?.message || 'Gagal menambah kamar.');
+    }
+  };
+
+  const handleDeletePhysicalRoom = async (roomId: string, roomNumber: string) => {
+    if (!confirm(`Hapus kamar nomor ${roomNumber} dari properti ini?`)) return;
+    try {
+      await apiRequest(`/pms/rooms/${roomId}`, { method: 'DELETE' });
+      await loadRoomSetup();
+      await refreshBootstrap();
+      setSaveSuccessMsg(`Kamar ${roomNumber} berhasil dihapus.`);
+      setTimeout(() => setSaveSuccessMsg(null), 4000);
+    } catch (err: any) {
+      alert(err?.message || 'Gagal menghapus kamar.');
+    }
   };
 
   // Interactive Tax Calculator State
@@ -232,7 +322,7 @@ export default function SettingsPage() {
           }`}
         >
           <Layers className="w-4 h-4" />
-          Rooms & Floors (40)
+          Rooms & Floors ({physicalRooms.length})
         </button>
 
         <button
@@ -244,7 +334,7 @@ export default function SettingsPage() {
           }`}
         >
           <TrendingUp className="w-4 h-4" />
-          Rate Plans (3)
+          Rate Plans ({dbRatePlans.length})
         </button>
       </div>
 
@@ -791,6 +881,29 @@ export default function SettingsPage() {
                     />
                   </div>
 
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="font-semibold text-muted-foreground block mb-1">Lantai Kamar</label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={newRtFloor}
+                        onChange={(e) => setNewRtFloor(Number(e.target.value))}
+                        className="w-full p-2.5 bg-muted/30 border border-border rounded-lg text-foreground font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="font-semibold text-muted-foreground block mb-1">Mulai Nomor Kamar</label>
+                      <input
+                        type="number"
+                        min={100}
+                        value={newRtStartNumber}
+                        onChange={(e) => setNewRtStartNumber(Number(e.target.value))}
+                        className="w-full p-2.5 bg-muted/30 border border-border rounded-lg text-foreground font-mono"
+                      />
+                    </div>
+                  </div>
+
                   <div className="pt-3 border-t border-border flex justify-end gap-2">
                     <button
                       type="button"
@@ -813,86 +926,105 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* Tab 4: Rooms & Floors Grid */}
+      {/* Tab 4: Rooms & Floors Grid (Synced with PostgreSQL) */}
       {activeTab === 'rooms' && (
         <div className="space-y-6">
-          {[
-            {
-              floor: 1,
-              name: 'Lantai 1',
-              rooms: ['101', '102', '103', '104', '105', '106', '107', '108', '109', '110'],
-              type: 'Superior Room',
-            },
-            {
-              floor: 2,
-              name: 'Lantai 2',
-              rooms: ['201', '202', '203', '204', '205', '206', '207', '208', '209', '210'],
-              type: '5 Superior / 5 Deluxe King',
-            },
-            {
-              floor: 3,
-              name: 'Lantai 3',
-              rooms: ['301', '302', '303', '304', '305', '306', '307', '308', '309', '310'],
-              type: 'Deluxe King',
-            },
-            {
-              floor: 4,
-              name: 'Lantai 4',
-              rooms: ['401', '402', '403', '404', '405', '406', '407', '408', '409', '410'],
-              type: '6 Executive Suite / 4 Family Suite',
-            },
-          ].map((fl) => (
-            <div key={fl.floor} className="p-5 bg-card border border-border rounded-xl shadow-xs space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <h4 className="font-bold text-sm text-foreground">{fl.name}</h4>
-                  <span className="text-xs text-muted-foreground">({fl.type})</span>
-                </div>
-                <span className="text-xs font-semibold text-emerald-600">10 Rooms Active</span>
-              </div>
-              <div className="grid grid-cols-5 sm:grid-cols-10 gap-2">
-                {fl.rooms.map((num) => (
-                  <div
-                    key={num}
-                    className="flex flex-col items-center justify-center p-2.5 rounded-lg border border-border bg-muted/30 hover:border-primary cursor-pointer transition-colors"
-                  >
-                    <span className="font-mono font-bold text-xs text-foreground">{num}</span>
-                    <span className="text-[9px] font-semibold text-emerald-600 mt-0.5">CLEAN</span>
-                  </div>
-                ))}
-              </div>
+          <form
+            onSubmit={handleAddPhysicalRoom}
+            className="p-4 bg-card border border-border rounded-xl shadow-xs grid grid-cols-1 sm:grid-cols-4 gap-3 items-end text-xs"
+          >
+            <div>
+              <label className="font-semibold text-muted-foreground block mb-1">Nomor Kamar *</label>
+              <input
+                type="text"
+                required
+                placeholder="Contoh: 106 atau VILLA-1"
+                value={newRoomNum}
+                onChange={(e) => setNewRoomNum(e.target.value)}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg font-mono font-bold"
+              />
             </div>
-          ))}
+            <div>
+              <label className="font-semibold text-muted-foreground block mb-1">Tipe Kamar *</label>
+              <select
+                value={newRoomTypeId || roomTypes[0]?.id || ''}
+                onChange={(e) => setNewRoomTypeId(e.target.value)}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg font-semibold"
+              >
+                {roomTypes.map((rt) => (
+                  <option key={rt.id || rt.code} value={rt.id}>
+                    {rt.name} ({rt.code})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="font-semibold text-muted-foreground block mb-1">Lantai *</label>
+              <input
+                type="number"
+                min={1}
+                max={50}
+                value={newRoomFloor}
+                onChange={(e) => setNewRoomFloor(Number(e.target.value))}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg font-mono"
+              />
+            </div>
+            <button
+              type="submit"
+              className="py-2 px-4 bg-primary text-white font-bold rounded-lg hover:bg-primary/90 flex items-center justify-center gap-1.5"
+            >
+              <Plus className="w-4 h-4" />
+              Tambah Unit Kamar
+            </button>
+          </form>
+
+          {Array.from(new Set(physicalRooms.map((r) => r.floor)))
+            .sort((a, b) => a - b)
+            .map((floorNum) => {
+              const floorRooms = physicalRooms.filter((r) => r.floor === floorNum);
+              return (
+                <div key={floorNum} className="p-5 bg-card border border-border rounded-xl shadow-xs space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-bold text-sm text-foreground">Lantai {floorNum}</h4>
+                    </div>
+                    <span className="text-xs font-semibold text-emerald-600">
+                      {floorRooms.length} Kamar Terdaftar
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 sm:grid-cols-6 md:grid-cols-10 gap-2">
+                    {floorRooms.map((rm) => (
+                      <div
+                        key={rm.id}
+                        className="group relative flex flex-col items-center justify-center p-2.5 rounded-lg border border-border bg-muted/30 hover:border-primary transition-colors"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePhysicalRoom(rm.id, rm.number)}
+                          title="Hapus kamar ini"
+                          className="hidden group-hover:flex absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-destructive text-white items-center justify-center text-[9px]"
+                        >
+                          ×
+                        </button>
+                        <span className="font-mono font-bold text-xs text-foreground">{rm.number}</span>
+                        <span className="text-[9px] text-muted-foreground truncate max-w-full">{rm.type}</span>
+                        <span className="text-[9px] font-semibold text-emerald-600 mt-0.5">
+                          {rm.housekeepingStatus}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
         </div>
       )}
 
       {/* Tab 5: Rate Plans */}
       {activeTab === 'ratePlans' && (
         <div className="space-y-4">
-          {[
-            {
-              code: 'RO',
-              name: 'Room Only (Flexible)',
-              desc: 'Standard flexible room rate without breakfast. Free cancellation up to 24h prior to arrival.',
-              isDerived: false,
-              discount: 'Base Rate (100%)',
-            },
-            {
-              code: 'BB',
-              name: 'Bed & Breakfast',
-              desc: 'Includes traditional Surakarta breakfast buffet for up to 2 guests per room.',
-              isDerived: true,
-              discount: 'Base + Rp 75.000 / pax',
-            },
-            {
-              code: 'NR',
-              name: 'Non-Refundable (Save 10%)',
-              desc: 'Discounted promotional rate. Non-cancellable, 100% pre-payment required upon booking.',
-              isDerived: true,
-              discount: '-10% off Room Only',
-            },
-          ].map((plan) => (
-            <div key={plan.code} className="p-5 bg-card border border-border rounded-xl shadow-xs space-y-2">
+          {dbRatePlans.map((plan) => (
+            <div key={plan.id} className="p-5 bg-card border border-border rounded-xl shadow-xs space-y-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <span className="w-10 h-10 rounded-lg bg-primary/10 text-primary font-bold flex items-center justify-center font-mono">
@@ -900,16 +1032,16 @@ export default function SettingsPage() {
                   </span>
                   <div>
                     <h4 className="font-bold text-base text-foreground">{plan.name}</h4>
-                    <p className="text-xs text-muted-foreground">{plan.desc}</p>
+                    <p className="text-xs text-muted-foreground">{plan.description || 'Rate plan aktif di PostgreSQL'}</p>
                   </div>
                 </div>
-                <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-muted text-foreground">
-                  {plan.discount}
+                <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600">
+                  DB Active
                 </span>
               </div>
               <div className="pt-3 border-t border-border flex items-center justify-between text-xs text-muted-foreground">
-                <span>Taxes Bound: Service Charge (10%) + PBJT Surakarta (10%)</span>
-                <span className="text-emerald-600 font-semibold">Active for Direct & Agoda OTA</span>
+                <span>Taxes Bound: Service Charge (10%) + PBJT Regional (10%)</span>
+                <span className="text-emerald-600 font-semibold">Active for Direct & Channel Manager</span>
               </div>
             </div>
           ))}

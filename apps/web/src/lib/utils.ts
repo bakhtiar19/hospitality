@@ -30,3 +30,14 @@ export function parseThousands(value: string | number | undefined | null): numbe
   return isNaN(parsed) ? 0 : parsed;
 }
 
+export function getTodayJakarta(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
+}
+
+export function addDaysIso(dateStr: string, days: number): string {
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return getTodayJakarta();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split('T')[0];
+}
+

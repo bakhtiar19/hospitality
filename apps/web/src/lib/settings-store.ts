@@ -1,3 +1,5 @@
+import { apiRequest, getStoredSession } from './api-client';
+
 export interface HotelSettings {
   hotelName: string;
   propertyCode: string;
@@ -60,4 +62,53 @@ export function saveHotelSettings(settings: Partial<HotelSettings>): HotelSettin
     console.error('Failed to save hotel settings', e);
     return defaultHotelSettings;
   }
+}
+
+export async function apiSaveHotelSettings(
+  settings: Partial<HotelSettings>
+): Promise<HotelSettings> {
+  const localUpdated = saveHotelSettings(settings);
+  if (!getStoredSession()) return localUpdated;
+  const synced = await apiRequest<HotelSettings>('/pms/settings', {
+    method: 'PUT',
+    body: JSON.stringify(settings),
+  });
+  return saveHotelSettings(synced);
+}
+
+/**
+ * Compresses an uploaded image file client-side (max 420px width/height, WebP/PNG)
+ * so hotel logos fit comfortably in PostgreSQL JSON without needing MinIO/S3.
+ */
+export function compressHotelLogoFile(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Gagal membaca file gambar.'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('File bukan gambar yang valid.'));
+      img.onload = () => {
+        const maxDim = 420;
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          const ratio = Math.min(maxDim / width, maxDim / height);
+          width = Math.round(width * ratio);
+          height = Math.round(height * ratio);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(reader.result as string);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        const compressed = canvas.toDataURL('image/webp', 0.85);
+        resolve(compressed.startsWith('data:image/webp') ? compressed : canvas.toDataURL('image/png'));
+      };
+      img.src = reader.result as string;
+    };
+    reader.readAsDataURL(file);
+  });
 }
