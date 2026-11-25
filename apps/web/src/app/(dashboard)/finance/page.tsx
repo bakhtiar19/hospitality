@@ -140,11 +140,11 @@ export default function FinanceOTASettlementPage() {
         const updated = current.map((tx) =>
           selectedTxIds.includes(tx.id)
             ? {
-                ...tx,
-                status: 'SETTLED' as const,
-                settledAt: dateStr,
-                settlementReference: batchRef,
-              }
+              ...tx,
+              status: 'SETTLED' as const,
+              settledAt: dateStr,
+              settlementReference: batchRef,
+            }
             : tx
         );
 
@@ -294,11 +294,10 @@ export default function FinanceOTASettlementPage() {
                 <button
                   key={st.id}
                   onClick={() => setStatusFilter(st.id as any)}
-                  className={`px-3 py-1 font-bold rounded-lg transition-all ${
-                    statusFilter === st.id
+                  className={`px-3 py-1 font-bold rounded-lg transition-all ${statusFilter === st.id
                       ? 'bg-card text-foreground shadow-xs'
                       : 'text-muted-foreground hover:text-foreground'
-                  }`}
+                    }`}
                 >
                   {st.label}
                 </button>
@@ -381,15 +380,14 @@ export default function FinanceOTASettlementPage() {
                       {/* Channel & No. Booking */}
                       <td className="p-3 font-medium">
                         <div className="font-mono font-bold text-foreground">{tx.otaBookingCode}</div>
-                        <span className={`inline-block text-[10px] font-bold px-1.5 py-0.2 rounded mt-0.5 ${
-                          tx.otaChannel === 'Agoda'
+                        <span className={`inline-block text-[10px] font-bold px-1.5 py-0.2 rounded mt-0.5 ${tx.otaChannel === 'Agoda'
                             ? 'bg-blue-500/10 text-blue-600 border border-blue-500/20'
                             : tx.otaChannel === 'Traveloka'
-                            ? 'bg-sky-500/10 text-sky-600 border border-sky-500/20'
-                            : tx.otaChannel === 'Booking.com'
-                            ? 'bg-indigo-500/10 text-indigo-600 border border-indigo-500/20'
-                            : 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
-                        }`}>
+                              ? 'bg-sky-500/10 text-sky-600 border border-sky-500/20'
+                              : tx.otaChannel === 'Booking.com'
+                                ? 'bg-indigo-500/10 text-indigo-600 border border-indigo-500/20'
+                                : 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
+                          }`}>
                           {tx.otaChannel}
                         </span>
                       </td>
