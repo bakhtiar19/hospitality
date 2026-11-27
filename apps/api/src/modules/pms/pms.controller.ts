@@ -12,6 +12,7 @@ import {
 import { PmsService } from './pms.service.js';
 import { PmsModulesService } from './pms-modules.service.js';
 import {
+  CancelPmsBookingDto,
   CheckOutPmsDto,
   CreatePmsBookingDto,
   ExtendPmsStayDto,
@@ -104,6 +105,16 @@ export class PmsController {
     @Body() dto: RecordPmsPaymentDto
   ) {
     return this.pmsService.recordPayment(propertyId, id, dto, user.sub);
+  }
+
+  @Post('bookings/:id/cancel')
+  @Permissions(PermissionCode.BOOKING_CANCEL)
+  async cancelBooking(
+    @CurrentPropertyId() propertyId: string,
+    @Param('id') id: string,
+    @Body() dto?: CancelPmsBookingDto
+  ) {
+    return this.pmsService.cancelBooking(propertyId, id, dto?.reason);
   }
 
   @Delete('bookings/:id')

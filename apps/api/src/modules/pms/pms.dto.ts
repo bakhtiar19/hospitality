@@ -7,6 +7,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Max,
   Min,
 } from 'class-validator';
 
@@ -116,6 +117,12 @@ export class CheckOutPmsDto {
   todayDate?: string;
 }
 
+export class CancelPmsBookingDto {
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
+
 export class SettleOtaBatchDto {
   @IsArray()
   @IsString({ each: true })
@@ -165,11 +172,23 @@ export class UpdatePmsSettingsDto {
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(100)
   pbjtRate?: number;
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(100)
   serviceChargeRate?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  pbjtEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  serviceChargeEnabled?: boolean;
 }
 
 export class CreatePublicBookingDto {

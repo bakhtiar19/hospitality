@@ -38,6 +38,7 @@ import {
 } from 'lucide-react';
 import { formatCurrency, getTodayJakarta, addDaysIso } from '../../../../lib/utils';
 import { apiRequest } from '../../../../lib/api-client';
+import { calculateHotelTax } from '../../../../lib/settings-store';
 import {
   TapeChartBooking,
   getStoredBookings,
@@ -121,6 +122,17 @@ export default function PublicBookingEnginePage() {
     phone: '+62 271 718899',
   });
   const [roomsList, setRoomsList] = useState<RoomSelection[]>(AVAILABLE_ROOMS);
+  const [taxConfig, setTaxConfig] = useState<{
+    pbjtEnabled: boolean;
+    serviceChargeEnabled: boolean;
+    pbjtRate: number;
+    serviceChargeRate: number;
+  }>({
+    pbjtEnabled: true,
+    serviceChargeEnabled: true,
+    pbjtRate: 10,
+    serviceChargeRate: 10,
+  });
 
   // Search parameters (Real-Time Jakarta Date)
   const [checkIn, setCheckIn] = useState(() => getTodayJakarta());
@@ -143,6 +155,10 @@ export default function PublicBookingEnginePage() {
       city: string;
       phone: string;
       logoUrl?: string;
+      pbjtRate?: number;
+      serviceChargeRate?: number;
+      pbjtEnabled?: boolean;
+      serviceChargeEnabled?: boolean;
       roomTypes: Array<{ code: string; name: string; baseRate: number; maxCapacity: number }>;
     }>(`/public/hotels/${slug}`, { skipAuth: true })
       .then((info) => {
@@ -152,6 +168,12 @@ export default function PublicBookingEnginePage() {
           address: info.address || info.city,
           phone: info.phone,
           logoUrl: info.logoUrl,
+        });
+        setTaxConfig({
+          pbjtEnabled: info.pbjtEnabled !== false,
+          serviceChargeEnabled: info.serviceChargeEnabled !== false,
+          pbjtRate: Number(info.pbjtRate ?? 10),
+          serviceChargeRate: Number(info.serviceChargeRate ?? 10),
         });
         if (Array.isArray(info.roomTypes) && info.roomTypes.length > 0) {
           const mapped: RoomSelection[] = info.roomTypes.map((rt, idx) => ({
@@ -240,10 +262,11 @@ export default function PublicBookingEnginePage() {
   const extraBedFee = addonExtraBed ? 250000 * nights : 0;
   const taxableBase = roomSubtotal + airportFee + extraBedFee;
 
-  // Surakarta PBJT Regional Hotel Tax (10%) & Service Charge (10%)
-  const pbjtTax = Math.round(taxableBase * 0.1);
-  const serviceCharge = Math.round(taxableBase * 0.1);
-  const grandTotal = taxableBase + pbjtTax + serviceCharge;
+  // Dynamic Hotel Tax Calculation (respects ON/OFF toggles & configured rates)
+  const taxBreakdown = calculateHotelTax(taxableBase, taxConfig);
+  const pbjtTax = taxBreakdown.pbjtAmount;
+  const serviceCharge = taxBreakdown.serviceAmount;
+  const grandTotal = taxBreakdown.grandTotal;
 
   // Simulate Instant Midtrans Payment & Direct PostgreSQL / PMS Synchronization
   const handlePayNow = async () => {
@@ -377,7 +400,16 @@ Paket: ${rateType === 'BB' ? 'Termasuk Sarapan' : 'Room Only'}
 
 *Rincian Biaya:*
 Total Dibayar: *${formatCurrency(grandTotal)}*
-(Termasuk PBJT Pajak Hotel 10% & Service Charge 10%)
+${
+  taxBreakdown.pbjtEnabled || taxBreakdown.serviceEnabled
+    ? `(${[
+        taxBreakdown.pbjtEnabled ? `Termasuk PBJT ${taxBreakdown.pbjtRate}%` : '',
+        taxBreakdown.serviceEnabled ? `Service Charge ${taxBreakdown.serviceRate}%` : '',
+      ]
+        .filter(Boolean)
+        .join(' & ')})`
+    : '(Harga Nett / Tanpa Service Charge & PBJT)'
+}
 
 *Wi-Fi Kamar:*
 SSID: Hotel_Winotosastro_AProject
@@ -778,20 +810,28 @@ Terima kasih atas kunjungan Anda!`;
                     <span className="font-mono text-foreground">{formatCurrency(extraBedFee)}</span>
                   </div>
                 )}
-                <div className="flex justify-between text-muted-foreground">
-                  <span>PBJT Pajak Hotel (10% Solo):</span>
-                  <span className="font-mono text-foreground">{formatCurrency(pbjtTax)}</span>
-                </div>
-                <div className="flex justify-between text-muted-foreground">
-                  <span>Service Charge (10%):</span>
-                  <span className="font-mono text-foreground">{formatCurrency(serviceCharge)}</span>
-                </div>
+                {taxBreakdown.pbjtEnabled && (
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>PBJT Pajak Hotel ({taxBreakdown.pbjtRate}%):</span>
+                    <span className="font-mono text-foreground">{formatCurrency(pbjtTax)}</span>
+                  </div>
+                )}
+                {taxBreakdown.serviceEnabled && (
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Service Charge ({taxBreakdown.serviceRate}%):</span>
+                    <span className="font-mono text-foreground">{formatCurrency(serviceCharge)}</span>
+                  </div>
+                )}
               </div>
 
               <div className="border-t border-border pt-3 flex items-center justify-between">
                 <div>
                   <span className="text-xs font-bold text-foreground block">Total Tagihan</span>
-                  <span className="text-[10px] text-muted-foreground">Termasuk Pajak & Layanan 21%</span>
+                  <span className="text-[10px] text-muted-foreground">
+                    {taxBreakdown.pbjtEnabled || taxBreakdown.serviceEnabled
+                      ? `Termasuk Pajak & Layanan (${taxBreakdown.effectivePercent.toFixed(1)}%)`
+                      : 'Harga Nett (Tanpa Pajak & Service)'}
+                  </span>
                 </div>
                 <span className="text-lg font-black text-primary font-mono">{formatCurrency(grandTotal)}</span>
               </div>
@@ -1352,14 +1392,18 @@ Terima kasih atas kunjungan Anda!`;
                       <span>Dasar Pengenaan Pajak (DPP):</span>
                       <span className="font-mono text-foreground">{formatCurrency(taxableBase)}</span>
                     </div>
-                    <div className="flex justify-between text-muted-foreground">
-                      <span>PBJT Jasa Perhotelan Solo (10%):</span>
-                      <span className="font-mono text-foreground">{formatCurrency(pbjtTax)}</span>
-                    </div>
-                    <div className="flex justify-between text-muted-foreground">
-                      <span>Biaya Layanan (Service Charge 10%):</span>
-                      <span className="font-mono text-foreground">{formatCurrency(serviceCharge)}</span>
-                    </div>
+                    {taxBreakdown.pbjtEnabled && (
+                      <div className="flex justify-between text-muted-foreground">
+                        <span>PBJT Jasa Perhotelan ({taxBreakdown.pbjtRate}%):</span>
+                        <span className="font-mono text-foreground">{formatCurrency(pbjtTax)}</span>
+                      </div>
+                    )}
+                    {taxBreakdown.serviceEnabled && (
+                      <div className="flex justify-between text-muted-foreground">
+                        <span>Biaya Layanan (Service Charge {taxBreakdown.serviceRate}%):</span>
+                        <span className="font-mono text-foreground">{formatCurrency(serviceCharge)}</span>
+                      </div>
+                    )}
                     <div className="border-t border-border pt-2 flex justify-between items-baseline">
                       <span className="font-bold text-foreground">Total Pembayaran (Lunas):</span>
                       <span className="text-base font-black text-emerald-600 font-mono">{formatCurrency(grandTotal)}</span>
@@ -1415,7 +1459,7 @@ Terima kasih atas kunjungan Anda!`;
       <footer className="border-t border-border bg-card py-6 mt-12 text-center text-xs text-muted-foreground">
         <p>© 2026 Hotel Winotosastro AProject. Powered by Antigravity Cloud PMS & Channel Manager.</p>
         <p className="text-[11px] mt-1 text-muted-foreground/70">
-          Complies with Indonesian HKPD Law No. 1/2022 (Surakarta PBJT Jasa Perhotelan 10% + Service Charge 10%).
+          {hotelBrand.hotelName} • Direct Reservation Engine
         </p>
       </footer>
     </div>

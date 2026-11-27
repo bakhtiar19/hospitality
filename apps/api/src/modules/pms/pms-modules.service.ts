@@ -672,13 +672,13 @@ export class PmsModulesService {
     ).length;
     const inHouseCount = bookings.filter((b) => b.status === 'CHECKED_IN').length;
 
-    // Rooms occupied today = IN_HOUSE or CONFIRMED covering todayStr
-    const occupiedToday = bookings.filter(
-      (b) =>
-        b.status !== 'CHECKED_OUT' &&
-        toDateStr(b.checkInDate) <= todayStr &&
-        toDateStr(b.checkOutDate) > todayStr
-    ).length;
+    // Rooms occupied today = IN_HOUSE or CONFIRMED covering todayStr (including same-day Day Use)
+    const occupiedToday = bookings.filter((b) => {
+      if (b.status === 'CHECKED_OUT') return false;
+      const inStr = toDateStr(b.checkInDate);
+      const outStr = toDateStr(b.checkOutDate);
+      return inStr === outStr ? inStr === todayStr : inStr <= todayStr && outStr > todayStr;
+    }).length;
 
     const occupancyPercent = Math.min(100, Math.round((occupiedToday / totalRooms) * 100));
 
@@ -692,7 +692,10 @@ export class PmsModulesService {
       if (b.checkInDate >= monthStart) {
         revenueMtd += amt;
       }
-      if (toDateStr(b.checkInDate) <= todayStr && toDateStr(b.checkOutDate) > todayStr) {
+      const inStr = toDateStr(b.checkInDate);
+      const outStr = toDateStr(b.checkOutDate);
+      const coversToday = inStr === outStr ? inStr === todayStr : inStr <= todayStr && outStr > todayStr;
+      if (coversToday) {
         const nights = Math.max(
           1,
           Math.round((b.checkOutDate.getTime() - b.checkInDate.getTime()) / 86_400_000)
@@ -710,9 +713,11 @@ export class PmsModulesService {
       const d = new Date(todayStart);
       d.setDate(d.getDate() - offset);
       const dStr = toDateStr(d);
-      const activeForDay = bookings.filter(
-        (b) => toDateStr(b.checkInDate) <= dStr && toDateStr(b.checkOutDate) > dStr
-      );
+      const activeForDay = bookings.filter((b) => {
+        const inStr = toDateStr(b.checkInDate);
+        const outStr = toDateStr(b.checkOutDate);
+        return inStr === outStr ? inStr === dStr : inStr <= dStr && outStr > dStr;
+      });
       const dayRev = activeForDay.reduce((sum, b) => {
         const n = Math.max(
           1,

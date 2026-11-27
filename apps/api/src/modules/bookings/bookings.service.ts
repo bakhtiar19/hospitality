@@ -364,6 +364,16 @@ export class BookingsService {
         return booking;
       }
 
+      if (
+        booking.status === 'CHECKED_IN' ||
+        booking.status === 'IN_HOUSE' ||
+        booking.status === 'CHECKED_OUT'
+      ) {
+        throw new BadRequestException(
+          'Reservasi yang sudah Check-In atau Check-Out tidak dapat dibatalkan (cancel).'
+        );
+      }
+
       // 1. Release inventory
       for (const br of booking.bookingRooms) {
         const stayDates = this.getDatesInRange(br.checkInDate, br.checkOutDate);

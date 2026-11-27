@@ -42,7 +42,7 @@ import {
   Tag,
   Building,
   ArrowUpRight,
-  Trash2,
+  Ban,
 } from 'lucide-react';
 import { useI18n } from '../../../providers/intl-provider';
 import { useAuth } from '../../../providers/auth-provider';
@@ -60,12 +60,13 @@ import {
   apiCheckOutBooking,
   apiExtendBookingStay,
   apiRecordBookingPayment,
-  apiDeletePmsBooking,
+  apiCancelPmsBooking,
   initialBookings,
   calculateBookingBalance,
+  doStayRangesOverlap,
   getPaymentMethodLabel,
 } from '../../../lib/bookings-store';
-import { getHotelSettings, HotelSettings } from '../../../lib/settings-store';
+import { getHotelSettings, calculateHotelTax, HotelSettings } from '../../../lib/settings-store';
 
 const defaultMockRooms = [
   // Lantai 1: Superior
@@ -149,7 +150,7 @@ export default function FrontDeskReservasiPage() {
   // ----------------------------------------------------
   // LIST VIEW STATE & FILTERS
   // ----------------------------------------------------
-  const [listTab, setListTab] = useState<'ALL' | 'ARRIVALS' | 'IN_HOUSE' | 'DEPARTURES' | 'WALK_IN' | 'FIT' | 'CHECKED_OUT'>('ALL');
+  const [listTab, setListTab] = useState<'ALL' | 'ARRIVALS' | 'IN_HOUSE' | 'DEPARTURES' | 'WALK_IN' | 'FIT' | 'CHECKED_OUT' | 'CANCELLED'>('ALL');
   const [listSearch, setListSearch] = useState('');
 
   // ----------------------------------------------------
@@ -160,6 +161,7 @@ export default function FrontDeskReservasiPage() {
 
   // 1. Create Reservation Modal (Walk-in vs FIT)
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isDayUseConfirmOpen, setIsDayUseConfirmOpen] = useState(false);
   const [resTimeFrame, setResTimeFrame] = useState<'WALK_IN' | 'FIT'>('WALK_IN');
   const [formGuestName, setFormGuestName] = useState('');
   const [formPhone, setFormPhone] = useState('');
@@ -232,9 +234,10 @@ export default function FrontDeskReservasiPage() {
       if (listTab === 'ARRIVALS' && !(b.checkInDate === today && b.status === 'CONFIRMED')) return false;
       if (listTab === 'IN_HOUSE' && b.status !== 'IN_HOUSE') return false;
       if (listTab === 'DEPARTURES' && !(b.checkOutDate === today && b.status === 'IN_HOUSE')) return false;
-      if (listTab === 'WALK_IN' && b.reservationType !== 'WALK_IN') return false;
-      if (listTab === 'FIT' && b.reservationType !== 'FIT') return false;
+      if (listTab === 'WALK_IN' && (b.reservationType !== 'WALK_IN' || b.status === 'CANCELLED')) return false;
+      if (listTab === 'FIT' && (b.reservationType !== 'FIT' || b.status === 'CANCELLED')) return false;
       if (listTab === 'CHECKED_OUT' && b.status !== 'CHECKED_OUT') return false;
+      if (listTab === 'CANCELLED' && b.status !== 'CANCELLED') return false;
 
       // Search filter
       if (listSearch.trim()) {
@@ -254,10 +257,11 @@ export default function FrontDeskReservasiPage() {
     const arrivalsToday = bookings.filter((b) => b.checkInDate === today && b.status === 'CONFIRMED').length;
     const inHouse = bookings.filter((b) => b.status === 'IN_HOUSE').length;
     const departuresToday = bookings.filter((b) => b.checkOutDate === today && b.status === 'IN_HOUSE').length;
-    const walkIns = bookings.filter((b) => b.reservationType === 'WALK_IN').length;
-    const fitCount = bookings.filter((b) => b.reservationType === 'FIT').length;
+    const walkIns = bookings.filter((b) => b.reservationType === 'WALK_IN' && b.status !== 'CANCELLED').length;
+    const fitCount = bookings.filter((b) => b.reservationType === 'FIT' && b.status !== 'CANCELLED').length;
     const checkedOut = bookings.filter((b) => b.status === 'CHECKED_OUT').length;
-    return { arrivalsToday, inHouse, departuresToday, walkIns, fitCount, checkedOut };
+    const cancelled = bookings.filter((b) => b.status === 'CANCELLED').length;
+    return { arrivalsToday, inHouse, departuresToday, walkIns, fitCount, checkedOut, cancelled };
   }, [bookings]);
 
   // Filtered available rooms specifically for the extension period [originalCheckOut -> newExtendCheckOut]
@@ -268,13 +272,12 @@ export default function FrontDeskReservasiPage() {
     if (extEnd <= extStart) return [];
 
     return mockRooms.filter((rm) => {
-      // Check if any other booking occupies this room between extStart and extEnd
+      // Check if any other active booking occupies this room between extStart and extEnd
       const hasConflict = bookings.some((b) => {
         if (b.id === extendModalBooking.id) return false;
-        if (b.status === 'CHECKED_OUT') return false;
+        if (b.status === 'CHECKED_OUT' || b.status === 'CANCELLED') return false;
         if (b.roomNumber !== rm.number) return false;
-        // Overlap: existing checkIn < newExtendCheckOut && existing checkOut > originalCheckOut
-        return b.checkInDate < extEnd && b.checkOutDate > extStart;
+        return doStayRangesOverlap(b.checkInDate, b.checkOutDate, extStart, extEnd);
       });
       return !hasConflict;
     });
@@ -298,18 +301,18 @@ export default function FrontDeskReservasiPage() {
     }
   }, [availableRoomsForExtend, extendModalBooking, extendSelectedRoom]);
 
-  // Availability check for new reservation based on formCheckIn and formCheckOut
+  // Availability check for new reservation based on formCheckIn and formCheckOut (supports same-day Day Use)
   const newResRoomAvailability = useMemo(() => {
-    if (!formCheckIn || !formCheckOut || formCheckOut <= formCheckIn) {
+    if (!formCheckIn || !formCheckOut || formCheckOut < formCheckIn) {
       return { availableRooms: mockRooms, conflictMap: new Map<string, TapeChartBooking>() };
     }
 
     const conflictMap = new Map<string, TapeChartBooking>();
     mockRooms.forEach((rm) => {
       const conflict = bookings.find((b) => {
-        if (b.status === 'CHECKED_OUT') return false;
+        if (b.status === 'CHECKED_OUT' || b.status === 'CANCELLED') return false;
         if (b.roomNumber !== rm.number) return false;
-        return b.checkInDate < formCheckOut && b.checkOutDate > formCheckIn;
+        return doStayRangesOverlap(b.checkInDate, b.checkOutDate, formCheckIn, formCheckOut);
       });
       if (conflict) {
         conflictMap.set(rm.number, conflict);
@@ -320,27 +323,46 @@ export default function FrontDeskReservasiPage() {
     return { availableRooms, conflictMap };
   }, [formCheckIn, formCheckOut, bookings]);
 
-  // Cancel / Delete a booking
+  // Cancel a booking (Pre-Check-In ONLY, no permanent deletion)
   const handleCancelBooking = async (bookingId: string) => {
     const target = bookings.find((b) => b.id === bookingId);
     if (!target) return;
-    if (!confirm(`Batalkan dan hapus reservasi atas nama ${target.guestName} (#${target.bookingNumber}) di Kamar ${target.roomNumber}?`)) return;
+
+    if (target.status !== 'CONFIRMED') {
+      alert(
+        'Reservasi tidak dapat di-cancel karena tamu sudah melakukan Check-In / Check-Out, atau reservasi sudah dibatalkan.'
+      );
+      return;
+    }
+
+    if (
+      !confirm(
+        `Cancel reservasi atas nama ${target.guestName} (#${target.bookingNumber}) di Kamar ${target.roomNumber}?`
+      )
+    ) {
+      return;
+    }
 
     try {
       if (dbSynced) {
-        await apiDeletePmsBooking(bookingId);
+        const cancelled = await apiCancelPmsBooking(bookingId, 'Dibatalkan oleh Front Desk sebelum Check-In');
         setBookings(getStoredBookings());
+        if (selectedBooking?.id === bookingId) {
+          setSelectedBooking(cancelled || { ...target, status: 'CANCELLED' });
+        }
       } else {
-        const updated = bookings.filter((b) => b.id !== bookingId);
+        const updated = bookings.map((b) =>
+          b.id === bookingId ? { ...b, status: 'CANCELLED' as const } : b
+        );
         setBookings(updated);
         saveStoredBookings(updated);
+        if (selectedBooking?.id === bookingId) {
+          setSelectedBooking({ ...target, status: 'CANCELLED' });
+        }
       }
-      if (selectedBooking?.id === bookingId) {
-        setSelectedBooking(null);
-      }
-      triggerToast(`Reservasi ${target.guestName} (#${target.bookingNumber}) berhasil dibatalkan dan dihapus.`);
+      triggerToast(`Reservasi ${target.guestName} (#${target.bookingNumber}) berhasil di-cancel.`);
     } catch (err: any) {
-      alert(err?.message || 'Gagal menghapus reservasi.');
+      alert(err?.message || 'Gagal melakukan cancel reservasi.');
     }
   };
 
@@ -370,6 +392,15 @@ export default function FrontDeskReservasiPage() {
   };
 
   const handleExecuteCheckOut = async (booking: TapeChartBooking) => {
+    const balance = calculateBookingBalance(booking);
+    if (balance > 0) {
+      alert(
+        `Check-Out ditolak! Tamu harus sudah Full Payment (lunas 100%) sebelum Check-Out.\n\nSisa tagihan ${booking.guestName}: ${formatCurrency(balance)}. Silakan lunasi pembayaran terlebih dahulu.`
+      );
+      handleOpenPaymentModal(booking);
+      return;
+    }
+
     const isEarly = booking.checkOutDate > today;
     try {
       const apiUpdated = dbSynced ? await apiCheckOutBooking(booking.id, today) : null;
@@ -440,9 +471,9 @@ export default function FrontDeskReservasiPage() {
         return !bookings.some(
           (b) =>
             b.status !== 'CHECKED_OUT' &&
+            b.status !== 'CANCELLED' &&
             b.roomNumber === rm.number &&
-            b.checkInDate < checkOut &&
-            b.checkOutDate > checkIn
+            doStayRangesOverlap(b.checkInDate, b.checkOutDate, checkIn, checkOut)
         );
       });
       roomToSelect = freeRoom ? freeRoom.number : '101';
@@ -461,37 +492,33 @@ export default function FrontDeskReservasiPage() {
     setIsCreateModalOpen(true);
   };
 
-  // Calculate pricing for new reservation using editable room rate
+  // Calculate pricing for new reservation using editable room rate & ON/OFF tax settings
   const calcNewResPricing = () => {
     const r = mockRooms.find((rm) => rm.number === formRoomNumber) || mockRooms[0];
     const d1 = new Date(formCheckIn);
     const d2 = new Date(formCheckOut);
-    const nights = Math.max(1, Math.round((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24)));
+    const isDayUse = Boolean(formCheckIn && formCheckOut && formCheckIn === formCheckOut);
+    const nights = isDayUse
+      ? 1
+      : Math.max(1, Math.round((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24)));
     const ratePerNight = Number(formRoomRate) > 0 ? Number(formRoomRate) : r.baseRate;
     const subtotal = ratePerNight * nights;
-    const service = Math.round(subtotal * 0.1);
-    const pbjt = Math.round((subtotal + service) * 0.1);
-    const total = subtotal + service + pbjt;
-    return { nights, ratePerNight, subtotal, service, pbjt, total, room: r };
+    const taxCalc = calculateHotelTax(subtotal, hotelSettings);
+    return {
+      isDayUse,
+      nights,
+      ratePerNight,
+      subtotal,
+      service: taxCalc.serviceAmount,
+      pbjt: taxCalc.pbjtAmount,
+      total: taxCalc.grandTotal,
+      taxCalc,
+      room: r,
+    };
   };
 
-  const handleSaveNewReservation = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formGuestName.trim()) {
-      alert('Mohon masukkan nama tamu.');
-      return;
-    }
-
-    // Anti-Double Booking / Overbooking Check
-    const conflict = newResRoomAvailability.conflictMap.get(formRoomNumber);
-    if (conflict) {
-      alert(
-        `Gagal Menyimpan Reservasi: Kamar ${formRoomNumber} Tidak Tersedia!\n\nKamar ini sudah dipesan oleh ${conflict.guestName} (${conflict.source} #${conflict.bookingNumber}) untuk periode ${conflict.checkInDate} s/d ${conflict.checkOutDate}.\n\nSilakan pilih kamar lain yang masih berstatus [Tersedia].`
-      );
-      return;
-    }
-
-    const { nights, ratePerNight, total, room } = calcNewResPricing();
+  const executeSaveNewReservation = async () => {
+    const { isDayUse, nights, ratePerNight, total, room } = calcNewResPricing();
     const cleanInitialPay = parseThousands(formInitialPaymentAmount);
 
     try {
@@ -545,6 +572,7 @@ export default function FrontDeskReservasiPage() {
           ratePlan: formRatePlan,
           checkInDate: formCheckIn,
           checkOutDate: formCheckOut,
+          isDayUse,
           status: resTimeFrame === 'WALK_IN' && formAutoCheckIn ? 'IN_HOUSE' : 'CONFIRMED',
           totalAmount: total,
           balance,
@@ -557,16 +585,54 @@ export default function FrontDeskReservasiPage() {
       }
 
       const finalBal = calculateBookingBalance(createdBooking);
+      setIsDayUseConfirmOpen(false);
       setIsCreateModalOpen(false);
 
-      triggerToast(
-        resTimeFrame === 'WALK_IN'
-          ? `Walk-In Berhasil! Tamu ${createdBooking.guestName} langsung Check-In di Kamar ${createdBooking.roomNumber}. Sisa saldo: ${formatCurrency(finalBal)}.`
-          : `Reservasi FIT Berhasil! Reservasi ${createdBooking.guestName} (${nights} malam) untuk tanggal ${formCheckIn} telah tercatat. Sisa saldo: ${formatCurrency(finalBal)}.`
-      );
+      if (isDayUse) {
+        triggerToast(
+          resTimeFrame === 'WALK_IN'
+            ? `Check-In Day Use Berhasil! Tamu ${createdBooking.guestName} masuk di Kamar ${createdBooking.roomNumber} (Check-Out hari ini ${formCheckOut}). Sisa saldo: ${formatCurrency(finalBal)}.`
+            : `Reservasi Day Use Berhasil! ${createdBooking.guestName} di Kamar ${createdBooking.roomNumber} untuk tanggal ${formCheckIn}. Sisa saldo: ${formatCurrency(finalBal)}.`
+        );
+      } else {
+        triggerToast(
+          resTimeFrame === 'WALK_IN'
+            ? `Walk-In Berhasil! Tamu ${createdBooking.guestName} langsung Check-In di Kamar ${createdBooking.roomNumber}. Sisa saldo: ${formatCurrency(finalBal)}.`
+            : `Reservasi FIT Berhasil! Reservasi ${createdBooking.guestName} (${nights} malam) untuk tanggal ${formCheckIn} telah tercatat. Sisa saldo: ${formatCurrency(finalBal)}.`
+        );
+      }
     } catch (err: any) {
       alert(err?.message || 'Gagal menyimpan reservasi.');
     }
+  };
+
+  const handleSaveNewReservation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formGuestName.trim()) {
+      alert('Mohon masukkan nama tamu.');
+      return;
+    }
+
+    if (!formCheckIn || !formCheckOut || formCheckOut < formCheckIn) {
+      alert('Tanggal Check-Out tidak boleh lebih awal dari tanggal Check-In.');
+      return;
+    }
+
+    // Anti-Double Booking / Overbooking Check
+    const conflict = newResRoomAvailability.conflictMap.get(formRoomNumber);
+    if (conflict) {
+      alert(
+        `Gagal Menyimpan Reservasi: Kamar ${formRoomNumber} Tidak Tersedia!\n\nKamar ini sudah dipesan oleh ${conflict.guestName} (${conflict.source} #${conflict.bookingNumber}) untuk periode ${conflict.checkInDate} s/d ${conflict.checkOutDate}.\n\nSilakan pilih kamar lain yang masih berstatus [Tersedia].`
+      );
+      return;
+    }
+
+    if (formCheckIn === formCheckOut) {
+      setIsDayUseConfirmOpen(true);
+      return;
+    }
+
+    await executeSaveNewReservation();
   };
 
   // Open Extend Stay Modal
@@ -596,9 +662,7 @@ export default function FrontDeskReservasiPage() {
     const chosenRoom = mockRooms.find((rm) => rm.number === extendSelectedRoom);
     const ratePerNight = Number(extendRoomRate) > 0 ? Number(extendRoomRate) : (chosenRoom?.baseRate || 650000);
     const subtotalExtra = ratePerNight * extraNights;
-    const serviceExtra = Math.round(subtotalExtra * 0.1);
-    const pbjtExtra = Math.round((subtotalExtra + serviceExtra) * 0.1);
-    const totalExtra = subtotalExtra + serviceExtra + pbjtExtra;
+    const totalExtra = calculateHotelTax(subtotalExtra, hotelSettings).grandTotal;
     const isMoved = extendSelectedRoom !== extendModalBooking.roomNumber;
 
     try {
@@ -1045,14 +1109,14 @@ export default function FrontDeskReservasiPage() {
 
                       {/* Date Cells & Booking Bars */}
                       {calendarDates.map((d) => {
-                        // Find all active bookings covering this date
-                        const cellBookings = bookings.filter(
-                          (b) =>
-                            b.roomNumber === room.number &&
-                            d.dayStr >= b.checkInDate &&
-                            d.dayStr < b.checkOutDate &&
-                            b.status !== 'CHECKED_OUT'
-                        );
+                        // Find all active bookings covering this date (including same-day Day Use)
+                        const cellBookings = bookings.filter((b) => {
+                          if (b.roomNumber !== room.number) return false;
+                          if (b.status === 'CHECKED_OUT' || b.status === 'CANCELLED') return false;
+                          return b.checkInDate === b.checkOutDate
+                            ? d.dayStr === b.checkInDate
+                            : d.dayStr >= b.checkInDate && d.dayStr < b.checkOutDate;
+                        });
 
                         const activeBooking = cellBookings[0];
                         const isOverbooked = cellBookings.length > 1;
@@ -1100,7 +1164,9 @@ export default function FrontDeskReservasiPage() {
                                   <div className="truncate flex items-center gap-1">
                                     <span className="truncate">{activeBooking.guestName}</span>
                                     <span className="text-[9px] px-1 bg-black/20 rounded font-mono">
-                                      {activeBooking.reservationType || activeBooking.source}
+                                      {activeBooking.isDayUse || activeBooking.checkInDate === activeBooking.checkOutDate
+                                        ? 'DAY USE'
+                                        : activeBooking.reservationType || activeBooking.source}
                                     </span>
                                   </div>
                                 ) : (
@@ -1166,6 +1232,7 @@ export default function FrontDeskReservasiPage() {
                 { id: 'WALK_IN', label: 'Walk-In', count: counts.walkIns },
                 { id: 'FIT', label: 'FIT Individual', count: counts.fitCount },
                 { id: 'CHECKED_OUT', label: 'Selesai (Checked-Out)', count: counts.checkedOut },
+                { id: 'CANCELLED', label: 'Dibatalkan (Cancelled)', count: counts.cancelled },
               ].map((tab) => (
                 <button
                   key={tab.id}
@@ -1241,6 +1308,11 @@ export default function FrontDeskReservasiPage() {
                             }`}>
                               {b.reservationType || b.source}
                             </span>
+                            {(b.isDayUse || b.checkInDate === b.checkOutDate) && (
+                              <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border border-cyan-500/25">
+                                DAY USE
+                              </span>
+                            )}
                             <span className="text-[10px] text-muted-foreground">{b.ratePlan}</span>
                           </div>
                         </td>
@@ -1305,6 +1377,8 @@ export default function FrontDeskReservasiPage() {
                               ? 'bg-emerald-600 text-white'
                               : b.status === 'CONFIRMED'
                               ? 'bg-blue-600 text-white'
+                              : b.status === 'CANCELLED'
+                              ? 'bg-rose-600 text-white'
                               : 'bg-slate-500 text-white'
                           }`}>
                             {b.status}
@@ -1331,7 +1405,7 @@ export default function FrontDeskReservasiPage() {
                               <button
                                 onClick={() => handleExecuteCheckOut(b)}
                                 className="flex items-center gap-1 px-2.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg text-[11px] shadow-xs transition-colors"
-                                title="Check-Out Tamu"
+                                title="Check-Out"
                               >
                                 <LogOut className="w-3 h-3" />
                                 Check-Out
@@ -1350,8 +1424,8 @@ export default function FrontDeskReservasiPage() {
                               </button>
                             )}
 
-                            {/* Payment Action (Kapanpun sebelum checkout) */}
-                            {b.status !== 'CHECKED_OUT' && (
+                            {/* Payment Action (Kapanpun sebelum checkout/cancel) */}
+                            {b.status !== 'CHECKED_OUT' && b.status !== 'CANCELLED' && (
                               <button
                                 onClick={() => handleOpenPaymentModal(b)}
                                 className="flex items-center gap-1 px-2.5 py-1.5 bg-muted hover:bg-muted/80 text-foreground font-semibold rounded-lg text-[11px] border border-border transition-colors"
@@ -1371,14 +1445,17 @@ export default function FrontDeskReservasiPage() {
                               <Printer className="w-3.5 h-3.5 text-primary" />
                             </button>
 
-                            {/* Batalkan / Hapus Reservasi */}
-                            <button
-                              onClick={() => handleCancelBooking(b.id)}
-                              className="p-1.5 bg-destructive/10 hover:bg-destructive/20 text-destructive rounded-lg border border-destructive/20 transition-colors"
-                              title="Batalkan / Hapus Reservasi Ini"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            {/* Cancel Reservation */}
+                            {b.status === 'CONFIRMED' && (
+                              <button
+                                onClick={() => handleCancelBooking(b.id)}
+                                className="flex items-center gap-1 px-2 py-1.5 bg-destructive/10 hover:bg-destructive/20 text-destructive font-semibold rounded-lg border border-destructive/20 text-[11px] transition-colors"
+                                title="Cancel Reservation"
+                              >
+                                <Ban className="w-3 h-3" />
+                                Cancel Reservation
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -1619,7 +1696,13 @@ export default function FrontDeskReservasiPage() {
                     required
                     readOnly={resTimeFrame === 'WALK_IN'}
                     value={formCheckIn}
-                    onChange={(e) => setFormCheckIn(e.target.value)}
+                    onChange={(e) => {
+                      const nextIn = e.target.value;
+                      setFormCheckIn(nextIn);
+                      if (nextIn && formCheckOut && nextIn > formCheckOut) {
+                        setFormCheckOut(nextIn);
+                      }
+                    }}
                     className={`w-full px-3 py-2 border border-border rounded-lg text-xs outline-none font-mono ${
                       resTimeFrame === 'WALK_IN' ? 'bg-muted text-muted-foreground' : 'bg-background focus:ring-2 focus:ring-primary/20'
                     }`}
@@ -1703,16 +1786,31 @@ export default function FrontDeskReservasiPage() {
                   <div className="p-3 bg-card border border-border rounded-xl space-y-1 text-xs">
                     <div className="flex justify-between text-muted-foreground">
                       <span>Durasi:</span>
-                      <span className="font-bold text-foreground">{p.nights} Malam</span>
+                      <span className="font-bold text-foreground">
+                        {p.isDayUse ? '1 Hari' : `${p.nights} Malam`}
+                      </span>
                     </div>
                     <div className="flex justify-between text-muted-foreground">
                       <span>Sewa Kamar ({p.room.type}):</span>
                       <span className="font-mono">{formatCurrency(p.subtotal)}</span>
                     </div>
-                    <div className="flex justify-between text-muted-foreground text-[11px]">
-                      <span>Service Charge 10% & PBJT 10%:</span>
-                      <span className="font-mono">{formatCurrency(p.service + p.pbjt)}</span>
-                    </div>
+                    {p.taxCalc.serviceEnabled && (
+                      <div className="flex justify-between text-muted-foreground text-[11px]">
+                        <span>Service Charge ({p.taxCalc.serviceRate}%):</span>
+                        <span className="font-mono">{formatCurrency(p.service)}</span>
+                      </div>
+                    )}
+                    {p.taxCalc.pbjtEnabled && (
+                      <div className="flex justify-between text-muted-foreground text-[11px]">
+                        <span>PBJT Pajak Hotel ({p.taxCalc.pbjtRate}%):</span>
+                        <span className="font-mono">{formatCurrency(p.pbjt)}</span>
+                      </div>
+                    )}
+                    {!p.taxCalc.serviceEnabled && !p.taxCalc.pbjtEnabled && (
+                      <div className="text-[11px] text-muted-foreground italic">
+                        Nett Rate (Service Charge & PBJT nonaktif di Setting)
+                      </div>
+                    )}
                     <div className="border-t border-border pt-1 flex justify-between font-bold text-sm">
                       <span className="text-foreground">Total Grand Total:</span>
                       <span className="font-mono text-primary">{formatCurrency(p.total)}</span>
@@ -1905,9 +2003,10 @@ export default function FrontDeskReservasiPage() {
                 const chosenRoom = mockRooms.find((rm) => rm.number === extendSelectedRoom);
                 const ratePerNight = Number(extendRoomRate) > 0 ? Number(extendRoomRate) : (chosenRoom?.baseRate || 650000);
                 const subtotalExtra = ratePerNight * extraNights;
-                const serviceExtra = Math.round(subtotalExtra * 0.1);
-                const pbjtExtra = Math.round((subtotalExtra + serviceExtra) * 0.1);
-                const totalExtra = subtotalExtra + serviceExtra + pbjtExtra;
+                const extTax = calculateHotelTax(subtotalExtra, hotelSettings);
+                const serviceExtra = extTax.serviceAmount;
+                const pbjtExtra = extTax.pbjtAmount;
+                const totalExtra = extTax.grandTotal;
 
                 return (
                   <div className="p-3 bg-primary/5 border border-primary/20 rounded-xl space-y-1.5 text-xs">
@@ -1928,10 +2027,18 @@ export default function FrontDeskReservasiPage() {
                       <span>Tarif Tambahan per Malam:</span>
                       <span className="font-mono">{formatCurrency(ratePerNight)}</span>
                     </div>
-                    <div className="flex justify-between text-muted-foreground text-[11px]">
-                      <span>Service 10% & PBJT 10%:</span>
-                      <span className="font-mono">{formatCurrency(serviceExtra + pbjtExtra)}</span>
-                    </div>
+                    {extTax.serviceEnabled && (
+                      <div className="flex justify-between text-muted-foreground text-[11px]">
+                        <span>Service Charge ({extTax.serviceRate}%):</span>
+                        <span className="font-mono">{formatCurrency(serviceExtra)}</span>
+                      </div>
+                    )}
+                    {extTax.pbjtEnabled && (
+                      <div className="flex justify-between text-muted-foreground text-[11px]">
+                        <span>PBJT Pajak Hotel ({extTax.pbjtRate}%):</span>
+                        <span className="font-mono">{formatCurrency(pbjtExtra)}</span>
+                      </div>
+                    )}
                     <div className="border-t border-border pt-1 flex justify-between font-bold text-sm">
                       <span className="text-foreground">Total Tambahan Tagihan:</span>
                       <span className="font-mono text-primary">{formatCurrency(totalExtra)}</span>
@@ -2211,10 +2318,26 @@ export default function FrontDeskReservasiPage() {
                   <span>Sewa Kamar ({printFolioBooking.ratePlan}):</span>
                   <span className="font-mono text-foreground">{formatCurrency(printFolioBooking.totalAmount)}</span>
                 </div>
-                <div className="flex justify-between text-muted-foreground text-[11px]">
-                  <span>Termasuk PBJT Hotel 10% & Service 10%:</span>
-                  <span className="font-mono text-emerald-600 font-semibold">Tercakup</span>
-                </div>
+                {(() => {
+                  const folioTaxCfg = printFolioBooking.taxMeta
+                    ? {
+                        pbjtEnabled: printFolioBooking.taxMeta.pbjtEnabled !== false,
+                        serviceChargeEnabled: printFolioBooking.taxMeta.serviceChargeEnabled !== false,
+                        pbjtRate: Number(printFolioBooking.taxMeta.pbjtRate ?? hotelSettings.pbjtRate ?? 10),
+                        serviceChargeRate: Number(printFolioBooking.taxMeta.serviceChargeRate ?? hotelSettings.serviceChargeRate ?? 10),
+                      }
+                    : hotelSettings;
+                  const taxLabels: string[] = [];
+                  if (folioTaxCfg.pbjtEnabled !== false) taxLabels.push(`PBJT ${folioTaxCfg.pbjtRate ?? 10}%`);
+                  if (folioTaxCfg.serviceChargeEnabled !== false) taxLabels.push(`Service ${folioTaxCfg.serviceChargeRate ?? 10}%`);
+                  if (taxLabels.length === 0) return null;
+                  return (
+                    <div className="flex justify-between text-muted-foreground text-[11px]">
+                      <span>Termasuk {taxLabels.join(' & ')}:</span>
+                      <span className="font-mono text-emerald-600 font-semibold">Tercakup</span>
+                    </div>
+                  );
+                })()}
 
                 {/* Payment History Breakdown */}
                 {printFolioBooking.payments && printFolioBooking.payments.length > 0 && (
@@ -2295,6 +2418,8 @@ export default function FrontDeskReservasiPage() {
                     ? 'bg-emerald-600 text-white'
                     : selectedBooking.status === 'CONFIRMED'
                     ? 'bg-blue-600 text-white'
+                    : selectedBooking.status === 'CANCELLED'
+                    ? 'bg-rose-600 text-white'
                     : 'bg-slate-500 text-white'
                 }`}>
                   {selectedBooking.status}
@@ -2309,7 +2434,14 @@ export default function FrontDeskReservasiPage() {
                 </div>
                 <div>
                   <span className="text-[10px] text-muted-foreground block">Masa Inap</span>
-                  <div className="font-bold text-foreground">{selectedBooking.checkInDate}</div>
+                  <div className="font-bold text-foreground flex items-center gap-1.5">
+                    <span>{selectedBooking.checkInDate}</span>
+                    {(selectedBooking.isDayUse || selectedBooking.checkInDate === selectedBooking.checkOutDate) && (
+                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-cyan-600 text-white font-extrabold">
+                        DAY USE
+                      </span>
+                    )}
+                  </div>
                   <div className="text-[10px] text-muted-foreground">s/d {selectedBooking.checkOutDate}</div>
                 </div>
                 <div>
@@ -2331,9 +2463,14 @@ export default function FrontDeskReservasiPage() {
                 (b) =>
                   b.id !== selectedBooking.id &&
                   b.status !== 'CHECKED_OUT' &&
+                  b.status !== 'CANCELLED' &&
                   b.roomNumber === selectedBooking.roomNumber &&
-                  b.checkInDate < selectedBooking.checkOutDate &&
-                  b.checkOutDate > selectedBooking.checkInDate
+                  doStayRangesOverlap(
+                    b.checkInDate,
+                    b.checkOutDate,
+                    selectedBooking.checkInDate,
+                    selectedBooking.checkOutDate
+                  )
               );
               if (conflicts.length > 0) {
                 return (
@@ -2385,14 +2522,15 @@ export default function FrontDeskReservasiPage() {
                   className="w-full py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl shadow-xs transition-colors flex items-center justify-center gap-1.5"
                 >
                   <LogOut className="w-4 h-4" />
-                  Check-Out Tamu & Selesaikan Kamar
+                  Check-Out
                 </button>
               )}
 
               <div className="grid grid-cols-3 gap-2">
                 <button
                   onClick={() => handleOpenExtendModal(selectedBooking)}
-                  className="py-2 bg-muted hover:bg-muted/80 text-foreground font-semibold rounded-xl border border-border flex items-center justify-center gap-1"
+                  disabled={selectedBooking.status !== 'IN_HOUSE'}
+                  className="py-2 bg-muted hover:bg-muted/80 disabled:opacity-40 disabled:cursor-not-allowed text-foreground font-semibold rounded-xl border border-border flex items-center justify-center gap-1"
                 >
                   <CalendarPlus className="w-3.5 h-3.5 text-primary" />
                   Extend
@@ -2400,7 +2538,8 @@ export default function FrontDeskReservasiPage() {
 
                 <button
                   onClick={() => handleOpenPaymentModal(selectedBooking)}
-                  className="py-2 bg-muted hover:bg-muted/80 text-foreground font-semibold rounded-xl border border-border flex items-center justify-center gap-1"
+                  disabled={selectedBooking.status === 'CHECKED_OUT' || selectedBooking.status === 'CANCELLED'}
+                  className="py-2 bg-muted hover:bg-muted/80 disabled:opacity-40 disabled:cursor-not-allowed text-foreground font-semibold rounded-xl border border-border flex items-center justify-center gap-1"
                 >
                   <CreditCard className="w-3.5 h-3.5 text-emerald-600" />
                   Bayar
@@ -2415,13 +2554,57 @@ export default function FrontDeskReservasiPage() {
                 </button>
               </div>
 
-              {/* Batalkan / Hapus Reservasi */}
+              {/* Cancel Reservation */}
+              {selectedBooking.status === 'CONFIRMED' && (
+                <button
+                  onClick={() => handleCancelBooking(selectedBooking.id)}
+                  className="w-full py-2 bg-destructive/10 hover:bg-destructive/20 text-destructive font-semibold rounded-xl border border-destructive/20 flex items-center justify-center gap-1.5 transition-colors text-xs"
+                >
+                  <Ban className="w-3.5 h-3.5" />
+                  Cancel Reservation
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL KONFIRMASI DAY USE (Same-Day Check-In & Check-Out)                   */}
+      {/* ========================================================================= */}
+      {isDayUseConfirmOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-card border border-cyan-500/40 rounded-2xl shadow-2xl p-6 space-y-4 text-xs animate-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-cyan-500/15 text-cyan-600 flex items-center justify-center flex-shrink-0">
+                <Clock className="w-5 h-5" />
+              </div>
+              <span className="text-[11px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full bg-cyan-500/15 text-cyan-700 dark:text-cyan-300">
+                Konfirmasi Transaksi Day Use
+              </span>
+            </div>
+
+            <div className="p-3.5 bg-muted/40 border border-border rounded-xl">
+              <p className="font-bold text-foreground leading-relaxed">
+                Apakah Anda yakin ingin melanjutkan penyimpanan transaksi Day Use ini?
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
               <button
-                onClick={() => handleCancelBooking(selectedBooking.id)}
-                className="w-full py-2 bg-destructive/10 hover:bg-destructive/20 text-destructive font-semibold rounded-xl border border-destructive/20 flex items-center justify-center gap-1.5 transition-colors text-xs"
+                type="button"
+                onClick={() => setIsDayUseConfirmOpen(false)}
+                className="px-4 py-2 bg-muted hover:bg-muted/80 text-foreground font-semibold rounded-xl transition-colors"
               >
-                <Trash2 className="w-3.5 h-3.5" />
-                Batalkan / Hapus Reservasi Ini
+                Batal / Ubah Tanggal
+              </button>
+              <button
+                type="button"
+                onClick={executeSaveNewReservation}
+                className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white font-bold rounded-xl shadow-xs transition-colors flex items-center gap-1.5"
+              >
+                <Check className="w-4 h-4" />
+                Ya, Lanjutkan Day Use
               </button>
             </div>
           </div>

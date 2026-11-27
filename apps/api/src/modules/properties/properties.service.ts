@@ -77,11 +77,22 @@ export class PropertiesService {
       logoUrl: logoUrl !== undefined ? logoUrl : prevSettings.logoUrl,
       checkInTime: typeof payload.checkInTime === 'string' ? payload.checkInTime : prevSettings.checkInTime,
       checkOutTime: typeof payload.checkOutTime === 'string' ? payload.checkOutTime : prevSettings.checkOutTime,
-      pbjtRate: typeof payload.pbjtRate === 'number' ? payload.pbjtRate : prevSettings.pbjtRate ?? 10,
+      pbjtRate:
+        typeof payload.pbjtRate === 'number'
+          ? Math.max(0, Math.min(100, payload.pbjtRate))
+          : prevSettings.pbjtRate ?? 10,
       serviceChargeRate:
         typeof payload.serviceChargeRate === 'number'
-          ? payload.serviceChargeRate
+          ? Math.max(0, Math.min(100, payload.serviceChargeRate))
           : prevSettings.serviceChargeRate ?? 10,
+      pbjtEnabled:
+        typeof payload.pbjtEnabled === 'boolean'
+          ? payload.pbjtEnabled
+          : prevSettings.pbjtEnabled ?? true,
+      serviceChargeEnabled:
+        typeof payload.serviceChargeEnabled === 'boolean'
+          ? payload.serviceChargeEnabled
+          : prevSettings.serviceChargeEnabled ?? true,
     };
 
     return prisma.property.update({
@@ -212,6 +223,8 @@ export class PropertiesService {
             checkOutTime: '12:00 WIB',
             pbjtRate: 10,
             serviceChargeRate: 10,
+            pbjtEnabled: true,
+            serviceChargeEnabled: true,
           },
           isActive: true,
         },

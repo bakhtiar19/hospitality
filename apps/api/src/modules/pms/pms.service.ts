@@ -24,10 +24,55 @@ function getTodayJakartaDate(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
 }
 
-function mapDbStatusToUi(status: string): 'CONFIRMED' | 'IN_HOUSE' | 'CHECKED_OUT' {
+function mapDbStatusToUi(status: string): 'CONFIRMED' | 'IN_HOUSE' | 'CHECKED_OUT' | 'CANCELLED' {
   if (status === 'CHECKED_IN' || status === 'IN_HOUSE') return 'IN_HOUSE';
   if (status === 'CHECKED_OUT') return 'CHECKED_OUT';
+  if (status === 'CANCELLED') return 'CANCELLED';
   return 'CONFIRMED';
+}
+
+type ResolvedTaxConfig = {
+  pbjtEnabled: boolean;
+  serviceChargeEnabled: boolean;
+  pbjtRate: number;
+  serviceChargeRate: number;
+};
+
+function resolveTaxConfig(
+  settings?: Record<string, any> | null,
+  taxConfigs?: Array<{ code: string; ratePercentage: any; isActive?: boolean }>
+): ResolvedTaxConfig {
+  const s = settings || {};
+  const pbjtTax = (taxConfigs || []).find((t) => t.code.includes('PBJT'));
+  const svcTax = (taxConfigs || []).find((t) => t.code.includes('SERVICE'));
+
+  return {
+    pbjtEnabled: s.pbjtEnabled !== undefined ? Boolean(s.pbjtEnabled) : (pbjtTax?.isActive ?? true),
+    serviceChargeEnabled:
+      s.serviceChargeEnabled !== undefined ? Boolean(s.serviceChargeEnabled) : (svcTax?.isActive ?? true),
+    pbjtRate: Number(s.pbjtRate ?? pbjtTax?.ratePercentage ?? 10),
+    serviceChargeRate: Number(s.serviceChargeRate ?? svcTax?.ratePercentage ?? 10),
+  };
+}
+
+function computeTaxBreakdown(subtotal: number, cfg: ResolvedTaxConfig) {
+  const service = cfg.serviceChargeEnabled
+    ? Math.round(subtotal * (Math.max(0, cfg.serviceChargeRate) / 100))
+    : 0;
+  const pbjt = cfg.pbjtEnabled
+    ? Math.round((subtotal + service) * (Math.max(0, cfg.pbjtRate) / 100))
+    : 0;
+  const parts: string[] = [];
+  if (cfg.serviceChargeEnabled && cfg.serviceChargeRate > 0) parts.push(`Service ${cfg.serviceChargeRate}%`);
+  if (cfg.pbjtEnabled && cfg.pbjtRate > 0) parts.push(`PBJT ${cfg.pbjtRate}%`);
+
+  return {
+    subtotal,
+    service,
+    pbjt,
+    totalAmount: subtotal + service + pbjt,
+    taxNote: parts.length > 0 ? `incl. ${parts.join(' & ')}` : 'Nett / Tanpa Pajak & Service',
+  };
 }
 
 function mapSourceToUi(source: string): 'DIRECT' | 'AGODA' | 'WALK_IN' | 'CORPORATE' {
@@ -95,11 +140,15 @@ export class PmsService {
       ratePlan: primaryRoom?.ratePlan?.name || 'Room Only',
       checkInDate: toIsoDate(new Date(b.checkInDate)),
       checkOutDate: toIsoDate(new Date(b.checkOutDate)),
+      isDayUse:
+        Boolean(meta.isDayUse) ||
+        toIsoDate(new Date(b.checkInDate)) === toIsoDate(new Date(b.checkOutDate)),
       status: mapDbStatusToUi(b.status),
       totalAmount,
       balance: Math.max(0, totalAmount - totalPaid),
       payments,
       notes: b.specialRequests || (meta.notes as string) || undefined,
+      taxMeta: meta.taxMeta || undefined,
     };
   }
 
@@ -117,7 +166,7 @@ export class PmsService {
         orderBy: { name: 'asc' },
       }),
       prisma.booking.findMany({
-        where: { propertyId, status: { not: 'CANCELLED' } },
+        where: { propertyId },
         include: {
           primaryGuest: true,
           bookingRooms: {
@@ -134,7 +183,7 @@ export class PmsService {
         orderBy: { checkInDate: 'desc' },
       }),
       prisma.taxConfiguration.findMany({
-        where: { propertyId, isActive: true },
+        where: { propertyId },
       }),
     ]);
 
@@ -143,8 +192,7 @@ export class PmsService {
     }
 
     const s = (property.settings as Record<string, any>) || {};
-    const pbjtTax = taxConfigs.find((t) => t.code.includes('PBJT'));
-    const svcTax = taxConfigs.find((t) => t.code.includes('SERVICE'));
+    const taxCfg = resolveTaxConfig(s, taxConfigs);
 
     return {
       settings: {
@@ -160,8 +208,10 @@ export class PmsService {
         checkInTime: s.checkInTime || '14:00 WIB',
         checkOutTime: s.checkOutTime || '12:00 WIB',
         currency: property.defaultCurrency || 'IDR',
-        pbjtRate: Number(s.pbjtRate ?? pbjtTax?.ratePercentage ?? 10),
-        serviceChargeRate: Number(s.serviceChargeRate ?? svcTax?.ratePercentage ?? 10),
+        pbjtRate: taxCfg.pbjtRate,
+        serviceChargeRate: taxCfg.serviceChargeRate,
+        pbjtEnabled: taxCfg.pbjtEnabled,
+        serviceChargeEnabled: taxCfg.serviceChargeEnabled,
       },
       rooms: rooms.map((r) => ({
         id: r.id,
@@ -204,11 +254,14 @@ export class PmsService {
   async createBooking(propertyId: string, dto: CreatePmsBookingDto, userId?: string) {
     const checkIn = new Date(dto.checkInDate);
     const checkOut = new Date(dto.checkOutDate);
-    if (Number.isNaN(checkIn.getTime()) || Number.isNaN(checkOut.getTime()) || checkIn >= checkOut) {
-      throw new BadRequestException('Tanggal check-out harus lebih lambat dari tanggal check-in.');
+    if (Number.isNaN(checkIn.getTime()) || Number.isNaN(checkOut.getTime()) || checkIn > checkOut) {
+      throw new BadRequestException('Tanggal check-out tidak boleh lebih awal dari tanggal check-in.');
     }
 
-    const nights = Math.max(1, Math.round((checkOut.getTime() - checkIn.getTime()) / 86_400_000));
+    const isDayUse = checkIn.getTime() === checkOut.getTime();
+    const nights = isDayUse
+      ? 1
+      : Math.max(1, Math.round((checkOut.getTime() - checkIn.getTime()) / 86_400_000));
 
     const created = await prisma.$transaction(async (tx) => {
       const room = await tx.room.findFirst({
@@ -224,8 +277,15 @@ export class PmsService {
           roomId: room.id,
           roomStatus: { notIn: ['CANCELLED', 'CHECKED_OUT'] },
           booking: { status: { notIn: ['CANCELLED', 'CHECKED_OUT'] } },
-          checkInDate: { lt: checkOut },
-          checkOutDate: { gt: checkIn },
+          OR: isDayUse
+            ? [
+                { checkInDate: { lte: checkIn }, checkOutDate: { gt: checkIn } },
+                { checkInDate: checkIn, checkOutDate: checkIn },
+              ]
+            : [
+                { checkInDate: { lt: checkOut }, checkOutDate: { gt: checkIn } },
+                { checkInDate: { gte: checkIn, lt: checkOut }, checkOutDate: { gte: checkIn, lt: checkOut } },
+              ],
         },
         include: { booking: { include: { primaryGuest: true } } },
       });
@@ -246,12 +306,16 @@ export class PmsService {
           data: { propertyId, code: 'RO', name: dto.ratePlan || 'Room Only', description: 'Kamar Saja' },
         }));
 
+      const [property, taxConfigs] = await Promise.all([
+        tx.property.findUnique({ where: { id: propertyId } }),
+        tx.taxConfiguration.findMany({ where: { propertyId } }),
+      ]);
+      const taxCfg = resolveTaxConfig((property?.settings as Record<string, any>) || {}, taxConfigs);
+
       const ratePerNight =
         dto.nightlyRate && dto.nightlyRate > 0 ? dto.nightlyRate : resolveRoomTypeBaseRate(room.roomType);
-      const subtotal = ratePerNight * nights;
-      const service = Math.round(subtotal * 0.1);
-      const pbjt = Math.round((subtotal + service) * 0.1);
-      const totalAmount = subtotal + service + pbjt;
+      const rawSubtotal = ratePerNight * nights;
+      const { subtotal, totalAmount, taxNote } = computeTaxBreakdown(rawSubtotal, taxCfg);
 
       const initPaid =
         dto.initialPaymentMethod && dto.initialPaymentMethod !== 'NONE' && (dto.initialPaymentAmount || 0) > 0
@@ -289,6 +353,8 @@ export class PmsService {
           specialRequests: dto.notes?.trim() || null,
           metadata: {
             reservationType: dto.reservationType || 'FIT',
+            isDayUse,
+            taxMeta: taxCfg,
           },
         },
       });
@@ -331,7 +397,9 @@ export class PmsService {
           transactionType: 'CHARGE',
           category: 'ROOM',
           amount: BigInt(totalAmount),
-          description: `Sewa Kamar ${room.roomNumber} (${nights} malam, incl. Service & PBJT)`,
+          description: isDayUse
+            ? `Day Use Kamar ${room.roomNumber} (${toIsoDate(checkIn)}, ${taxNote})`
+            : `Sewa Kamar ${room.roomNumber} (${nights} malam, ${taxNote})`,
           createdBy: userId || null,
         },
       });
@@ -410,9 +478,31 @@ export class PmsService {
     const updated = await prisma.$transaction(async (tx) => {
       const booking = await tx.booking.findFirst({
         where: { id: bookingId, propertyId },
-        include: { bookingRooms: true },
+        include: { bookingRooms: true, payments: true, folios: true },
       });
       if (!booking) throw new NotFoundException('Reservasi tidak ditemukan.');
+
+      if (booking.status === 'CHECKED_OUT') {
+        throw new BadRequestException('Reservasi ini sudah berstatus Check-Out.');
+      }
+      if (booking.status === 'CANCELLED') {
+        throw new BadRequestException('Reservasi yang sudah dibatalkan tidak bisa Check-Out.');
+      }
+      if (booking.status !== 'CHECKED_IN' && booking.status !== 'IN_HOUSE') {
+        throw new BadRequestException('Tamu harus berstatus Check-In (In-House) sebelum melakukan Check-Out.');
+      }
+
+      const paidFromPayments = (booking.payments || [])
+        .filter((p) => p.status === 'SUCCESS' || !p.status)
+        .reduce((sum, p) => sum + Number(p.amount), 0);
+      const totalPaid = Math.max(Number(booking.totalPaid || 0), paidFromPayments);
+      const remainingBalance = Math.max(0, Number(booking.totalAmount || 0) - totalPaid);
+
+      if (remainingBalance > 0) {
+        throw new BadRequestException(
+          `Check-out ditolak: pembayaran harus lunas 100% (Full Payment). Sisa tagihan: Rp ${remainingBalance.toLocaleString('id-ID')}.`
+        );
+      }
 
       const currentOutStr = toIsoDate(new Date(booking.checkOutDate));
       const isEarly = currentOutStr > todayStr;
@@ -422,10 +512,20 @@ export class PmsService {
         where: { id: booking.id },
         data: {
           status: 'CHECKED_OUT',
+          paymentStatus: 'PAID',
           checkOutDate: finalCheckOut,
           actualCheckOutAt: new Date(),
         },
       });
+
+      for (const f of booking.folios) {
+        if (f.status === 'OPEN') {
+          await tx.folio.update({
+            where: { id: f.id },
+            data: { status: 'SETTLED', balance: BigInt(0) },
+          });
+        }
+      }
 
       for (const br of booking.bookingRooms) {
         await tx.bookingRoom.update({
@@ -499,12 +599,16 @@ export class PmsService {
         throw new ConflictException(`Kamar ${dto.roomNumber} sudah dipesan pada tanggal perpanjangan.`);
       }
 
+      const [property, taxConfigs] = await Promise.all([
+        tx.property.findUnique({ where: { id: propertyId } }),
+        tx.taxConfiguration.findMany({ where: { propertyId } }),
+      ]);
+      const taxCfg = resolveTaxConfig((property?.settings as Record<string, any>) || {}, taxConfigs);
+
       const ratePerNight =
         dto.nightlyRate && dto.nightlyRate > 0 ? dto.nightlyRate : resolveRoomTypeBaseRate(targetRoom.roomType);
       const subtotalExtra = ratePerNight * extraNights;
-      const serviceExtra = Math.round(subtotalExtra * 0.1);
-      const pbjtExtra = Math.round((subtotalExtra + serviceExtra) * 0.1);
-      const totalExtra = subtotalExtra + serviceExtra + pbjtExtra;
+      const { totalAmount: totalExtra } = computeTaxBreakdown(subtotalExtra, taxCfg);
 
       const currentPrimaryRoom = booking.bookingRooms[0];
       const isMoved = currentPrimaryRoom?.room?.roomNumber !== dto.roomNumber;
@@ -524,7 +628,7 @@ export class PmsService {
             totalPaid: BigInt(0),
             paymentStatus: 'UNPAID',
             specialRequests: `Perpanjangan Inap (Pindah dari Kamar ${currentPrimaryRoom?.room?.roomNumber || '-'})`,
-            metadata: { reservationType: 'FIT' },
+            metadata: { reservationType: 'FIT', taxMeta: taxCfg },
           },
         });
         await tx.bookingRoom.create({
@@ -688,27 +792,77 @@ export class PmsService {
     return this.mapBookingToTapeChart(updated);
   }
 
-  async deleteBooking(propertyId: string, bookingId: string) {
-    await prisma.$transaction(async (tx) => {
+  async cancelBooking(propertyId: string, bookingId: string, reason?: string) {
+    const updated = await prisma.$transaction(async (tx) => {
       const booking = await tx.booking.findFirst({
         where: { id: bookingId, propertyId },
-        include: { bookingRooms: true },
+        include: { bookingRooms: true, folios: true },
       });
       if (!booking) throw new NotFoundException('Reservasi tidak ditemukan.');
 
-      if (booking.status === 'CHECKED_IN') {
-        for (const br of booking.bookingRooms) {
-          if (br.roomId) {
-            await tx.room.update({
-              where: { id: br.roomId },
-              data: { operationalStatus: 'AVAILABLE' },
-            });
-          }
+      if (booking.status === 'CANCELLED') {
+        throw new BadRequestException('Reservasi ini sudah berstatus Dibatalkan (Cancelled).');
+      }
+
+      if (
+        booking.status === 'CHECKED_IN' ||
+        booking.status === 'IN_HOUSE' ||
+        booking.status === 'CHECKED_OUT'
+      ) {
+        throw new BadRequestException(
+          'Reservasi tidak dapat dibatalkan karena tamu sudah melakukan Check-In atau Check-Out.'
+        );
+      }
+
+      const prevMeta = (booking.metadata as Record<string, unknown>) || {};
+      const cancelNote = reason?.trim();
+
+      await tx.booking.update({
+        where: { id: booking.id },
+        data: {
+          status: 'CANCELLED',
+          specialRequests: cancelNote
+            ? `${booking.specialRequests ? `${booking.specialRequests}\n` : ''}[Cancelled]: ${cancelNote}`
+            : booking.specialRequests,
+          metadata: {
+            ...prevMeta,
+            cancelledAt: new Date().toISOString(),
+            ...(cancelNote ? { cancelReason: cancelNote } : {}),
+          },
+        },
+      });
+
+      await tx.bookingRoom.updateMany({
+        where: { bookingId: booking.id },
+        data: { roomStatus: 'CANCELLED' },
+      });
+
+      for (const f of booking.folios) {
+        if (f.status === 'OPEN') {
+          await tx.folio.update({
+            where: { id: f.id },
+            data: { status: 'VOID' },
+          });
         }
       }
-      await tx.booking.delete({ where: { id: booking.id } });
+
+      return tx.booking.findUnique({
+        where: { id: booking.id },
+        include: {
+          primaryGuest: true,
+          bookingRooms: { include: { room: true, roomType: true, ratePlan: true } },
+          payments: { orderBy: { createdAt: 'asc' } },
+        },
+      });
     });
-    return { deleted: true, id: bookingId };
+
+    return this.mapBookingToTapeChart(updated);
+  }
+
+  async deleteBooking(_propertyId: string, _bookingId: string) {
+    throw new BadRequestException(
+      'Hapus reservasi tidak diperbolehkan. Gunakan fitur Cancel Reservasi (hanya berlaku sebelum tamu Check-In).'
+    );
   }
 
   async settleOtaTransactions(propertyId: string, dto: SettleOtaBatchDto) {
@@ -757,6 +911,24 @@ export class PmsService {
       dto as unknown as Record<string, unknown>
     );
     const s = (updated.settings as Record<string, any>) || {};
+    const taxCfg = resolveTaxConfig(s);
+
+    // Sync TaxConfiguration records cleanly with PBJT / Service Charge toggles and rates
+    const existingTaxes = await prisma.taxConfiguration.findMany({ where: { propertyId } });
+    for (const t of existingTaxes) {
+      if (t.code.includes('PBJT')) {
+        await prisma.taxConfiguration.update({
+          where: { id: t.id },
+          data: { isActive: taxCfg.pbjtEnabled, ratePercentage: taxCfg.pbjtRate },
+        });
+      } else if (t.code.includes('SERVICE')) {
+        await prisma.taxConfiguration.update({
+          where: { id: t.id },
+          data: { isActive: taxCfg.serviceChargeEnabled, ratePercentage: taxCfg.serviceChargeRate },
+        });
+      }
+    }
+
     return {
       hotelName: updated.name,
       propertyCode: updated.code,
@@ -770,8 +942,10 @@ export class PmsService {
       checkInTime: s.checkInTime || '14:00 WIB',
       checkOutTime: s.checkOutTime || '12:00 WIB',
       currency: updated.defaultCurrency || 'IDR',
-      pbjtRate: Number(s.pbjtRate ?? 10),
-      serviceChargeRate: Number(s.serviceChargeRate ?? 10),
+      pbjtRate: taxCfg.pbjtRate,
+      serviceChargeRate: taxCfg.serviceChargeRate,
+      pbjtEnabled: taxCfg.pbjtEnabled,
+      serviceChargeEnabled: taxCfg.serviceChargeEnabled,
     };
   }
 
@@ -799,7 +973,7 @@ export class PmsService {
           include: { ratePlanRooms: true },
           orderBy: { name: 'asc' },
         },
-        taxConfigs: { where: { isActive: true } },
+        taxConfigs: true,
       },
     });
     if (!property) {
@@ -811,6 +985,7 @@ export class PmsService {
   async getPublicHotelInfo(slug: string) {
     const prop = await this.resolvePublicProperty(slug);
     const s = (prop.settings as Record<string, any>) || {};
+    const taxCfg = resolveTaxConfig(s, prop.taxConfigs);
     return {
       propertyCode: prop.code,
       hotelName: prop.name,
@@ -820,8 +995,10 @@ export class PmsService {
       logoUrl: s.logoUrl || '',
       checkInTime: s.checkInTime || '14:00 WIB',
       checkOutTime: s.checkOutTime || '12:00 WIB',
-      pbjtRate: Number(s.pbjtRate ?? 10),
-      serviceChargeRate: Number(s.serviceChargeRate ?? 10),
+      pbjtRate: taxCfg.pbjtRate,
+      serviceChargeRate: taxCfg.serviceChargeRate,
+      pbjtEnabled: taxCfg.pbjtEnabled,
+      serviceChargeEnabled: taxCfg.serviceChargeEnabled,
       roomTypes: prop.roomTypes.map((rt) => ({
         code: rt.code,
         name: rt.name,
@@ -888,11 +1065,10 @@ export class PmsService {
           data: { propertyId: prop.id, code: 'RO', name: 'Room Only', description: 'Kamar Saja' },
         }));
 
+      const taxCfg = resolveTaxConfig((prop.settings as Record<string, any>) || {}, prop.taxConfigs);
       const nightly = resolveRoomTypeBaseRate(roomType);
-      const subtotal = nightly * nights;
-      const service = Math.round(subtotal * 0.1);
-      const pbjt = Math.round((subtotal + service) * 0.1);
-      const totalAmount = subtotal + service + pbjt;
+      const rawSubtotal = nightly * nights;
+      const { totalAmount } = computeTaxBreakdown(rawSubtotal, taxCfg);
 
       const { firstName, lastName } = splitGuestName(dto.guestName);
       const guest = await tx.guest.create({

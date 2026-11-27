@@ -15,6 +15,8 @@ export interface HotelSettings {
   currency: string;
   pbjtRate: number; // 10%
   serviceChargeRate: number; // 10%
+  pbjtEnabled: boolean;
+  serviceChargeEnabled: boolean;
 }
 
 export const defaultHotelSettings: HotelSettings = {
@@ -32,7 +34,56 @@ export const defaultHotelSettings: HotelSettings = {
   currency: 'IDR',
   pbjtRate: 10,
   serviceChargeRate: 10,
+  pbjtEnabled: true,
+  serviceChargeEnabled: true,
 };
+
+export interface HotelTaxCalculation {
+  baseAmount: number;
+  serviceEnabled: boolean;
+  pbjtEnabled: boolean;
+  serviceRate: number;
+  pbjtRate: number;
+  serviceAmount: number;
+  pbjtAmount: number;
+  totalTaxAmount: number;
+  grandTotal: number;
+  effectivePercent: number;
+}
+
+/**
+ * Computes Hotel Service Charge & PBJT tax dynamically based on hotel settings toggles.
+ */
+export function calculateHotelTax(
+  baseAmount: number,
+  settings?: Partial<Pick<HotelSettings, 'pbjtEnabled' | 'serviceChargeEnabled' | 'pbjtRate' | 'serviceChargeRate'>> | null
+): HotelTaxCalculation {
+  const serviceEnabled = settings?.serviceChargeEnabled !== false;
+  const pbjtEnabled = settings?.pbjtEnabled !== false;
+  const serviceRate = Math.max(0, Number(settings?.serviceChargeRate ?? 10));
+  const pbjtRate = Math.max(0, Number(settings?.pbjtRate ?? 10));
+
+  const serviceAmount = serviceEnabled ? Math.round(baseAmount * (serviceRate / 100)) : 0;
+  const pbjtBase = baseAmount + serviceAmount;
+  const pbjtAmount = pbjtEnabled ? Math.round(pbjtBase * (pbjtRate / 100)) : 0;
+  const totalTaxAmount = serviceAmount + pbjtAmount;
+  const grandTotal = baseAmount + totalTaxAmount;
+  const effectivePercent =
+    baseAmount > 0 ? Number(((totalTaxAmount / baseAmount) * 100).toFixed(1)) : 0;
+
+  return {
+    baseAmount,
+    serviceEnabled,
+    pbjtEnabled,
+    serviceRate,
+    pbjtRate,
+    serviceAmount,
+    pbjtAmount,
+    totalTaxAmount,
+    grandTotal,
+    effectivePercent,
+  };
+}
 
 const SETTINGS_STORAGE_KEY = 'hotel_winotosastro_settings';
 

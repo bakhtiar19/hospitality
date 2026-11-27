@@ -23,6 +23,7 @@ import {
   Hotel,
   DollarSign,
   Crown,
+  BedDouble,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useI18n } from '../../providers/intl-provider';
@@ -40,6 +41,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { id: 'dashboard', nameKey: 'modules.dashboard', href: '/dashboard', icon: LayoutDashboard },
   { id: 'frontOffice', nameKey: 'modules.frontOffice', href: '/front-office', icon: ConciergeBell, badge: 'Kalender & List' },
+  { id: 'roomAvailability', nameKey: 'modules.roomAvailability', href: '/room-availability', icon: BedDouble },
   { id: 'rates', nameKey: 'modules.rates', href: '/rates', icon: TrendingUp },
   { id: 'channels', nameKey: 'modules.channels', href: '/channels', icon: Share2, badge: 'Agoda' },
   { id: 'housekeeping', nameKey: 'modules.housekeeping', href: '/housekeeping', icon: Sparkles },

@@ -35,6 +35,7 @@ import {
   saveHotelSettings,
   apiSaveHotelSettings,
   compressHotelLogoFile,
+  calculateHotelTax,
   HotelSettings,
 } from '../../../lib/settings-store';
 
@@ -247,12 +248,49 @@ export default function SettingsPage() {
     }
   };
 
-  // Interactive Tax Calculator State
+  // Interactive Tax Calculator State (follows ON/OFF toggles & configured rates)
   const [calcBaseRate, setCalcBaseRate] = useState<number>(1000000);
-  const serviceChargeAmount = Math.round(calcBaseRate * 0.1);
-  const pbjtSubtotal = calcBaseRate + serviceChargeAmount;
-  const pbjtAmount = Math.round(pbjtSubtotal * 0.1);
-  const totalGrossAmount = pbjtSubtotal + pbjtAmount;
+  const taxPreview = calculateHotelTax(calcBaseRate, hotelSettings);
+  const serviceChargeAmount = taxPreview.serviceAmount;
+  const pbjtAmount = taxPreview.pbjtAmount;
+  const totalGrossAmount = taxPreview.grandTotal;
+
+  const handleToggleTax = async (field: 'serviceChargeEnabled' | 'pbjtEnabled', nextValue: boolean) => {
+    const next = { ...hotelSettings, [field]: nextValue };
+    setHotelSettings(next);
+    try {
+      const updated = await apiSaveHotelSettings({
+        [field]: nextValue,
+        pbjtRate: Number(next.pbjtRate ?? 10),
+        serviceChargeRate: Number(next.serviceChargeRate ?? 10),
+      });
+      setHotelSettings(updated);
+      setSaveSuccessMsg(
+        `${field === 'pbjtEnabled' ? 'PBJT Pajak Hotel' : 'Service Charge'} berhasil ${
+          nextValue ? 'DIAKTIFKAN' : 'DINONAKTIFKAN'
+        } dan disimpan ke database.`
+      );
+      setTimeout(() => setSaveSuccessMsg(null), 4000);
+    } catch (err: any) {
+      alert(err?.message || 'Gagal menyimpan pengaturan pajak.');
+    }
+  };
+
+  const handleSaveTaxSettings = async () => {
+    try {
+      const updated = await apiSaveHotelSettings({
+        pbjtEnabled: hotelSettings.pbjtEnabled !== false,
+        serviceChargeEnabled: hotelSettings.serviceChargeEnabled !== false,
+        pbjtRate: Math.max(0, Math.min(100, Number(hotelSettings.pbjtRate ?? 10))),
+        serviceChargeRate: Math.max(0, Math.min(100, Number(hotelSettings.serviceChargeRate ?? 10))),
+      });
+      setHotelSettings(updated);
+      setSaveSuccessMsg('Konfigurasi tarif & status ON/OFF PBJT & Service Charge berhasil disimpan!');
+      setTimeout(() => setSaveSuccessMsg(null), 4000);
+    } catch (err: any) {
+      alert(err?.message || 'Gagal menyimpan tarif pajak.');
+    }
+  };
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
@@ -612,65 +650,159 @@ export default function SettingsPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
             <div className="p-6 bg-card border border-border rounded-xl shadow-xs">
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
                 <div>
-                  <h3 className="text-base font-bold text-foreground">Configured Taxes & Fees</h3>
+                  <h3 className="text-base font-bold text-foreground">Configured Taxes & Fees (ON / OFF)</h3>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    Indonesian hotel taxes are regional PBJT (Law No. 1/2022 HKPD). Fully configurable per rate plan.
+                    Owner dapat mengaktifkan atau menonaktifkan perhitungan serta tampilan Service Charge & PBJT sesuai kebijakan hotel.
                   </p>
                 </div>
-                <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-primary text-white hover:bg-primary/90 transition-colors">
-                  <Plus className="w-3.5 h-3.5" />
-                  Add Custom Tax
+                <button
+                  type="button"
+                  onClick={handleSaveTaxSettings}
+                  className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-lg bg-primary text-white hover:bg-primary/90 transition-colors self-start"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  Simpan Pengaturan Pajak
                 </button>
               </div>
 
               <div className="space-y-3">
                 {/* Tax 1: Service Charge */}
-                <div className="flex items-center justify-between p-4 bg-muted/20 border border-border rounded-xl">
+                <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 border rounded-xl transition-colors ${
+                  hotelSettings.serviceChargeEnabled !== false
+                    ? 'bg-muted/20 border-border'
+                    : 'bg-muted/10 border-border/60 opacity-75'
+                }`}>
                   <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-blue-500/10 text-blue-600 flex items-center justify-center font-bold text-xs">
+                    <div className="w-8 h-8 rounded-lg bg-blue-500/10 text-blue-600 flex items-center justify-center font-bold text-xs flex-shrink-0">
                       #1
                     </div>
                     <div>
-                      <div className="font-bold text-sm text-foreground flex items-center gap-2">
+                      <div className="font-bold text-sm text-foreground flex items-center gap-2 flex-wrap">
                         Hotel Service Charge
                         <span className="text-[10px] px-1.5 py-0.2 rounded bg-muted text-muted-foreground font-mono">
                           SERVICE-CHARGE
                         </span>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                          hotelSettings.serviceChargeEnabled !== false
+                            ? 'bg-emerald-500/10 text-emerald-600'
+                            : 'bg-muted text-muted-foreground'
+                        }`}>
+                          {hotelSettings.serviceChargeEnabled !== false ? 'AKTIF' : 'NONAKTIF'}
+                        </span>
                       </div>
                       <div className="text-xs text-muted-foreground mt-0.5">
-                        Applied first on base room rate. Exclusive.
+                        Applied first on base room rate. {hotelSettings.serviceChargeEnabled !== false ? 'Dihitung & ditampilkan pada reservasi/nota.' : 'Tidak dihitung & tidak ditampilkan.'}
                       </div>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <span className="text-lg font-extrabold text-foreground">10.0%</span>
-                    <div className="text-[11px] text-emerald-600 font-semibold">Active • All Plans</div>
+                  <div className="flex items-center gap-3 self-end sm:self-center">
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        step={0.5}
+                        disabled={hotelSettings.serviceChargeEnabled === false}
+                        value={hotelSettings.serviceChargeRate ?? 10}
+                        onChange={(e) =>
+                          setHotelSettings({
+                            ...hotelSettings,
+                            serviceChargeRate: Math.max(0, Math.min(100, Number(e.target.value) || 0)),
+                          })
+                        }
+                        className="w-16 px-2 py-1 text-right bg-background border border-border rounded-lg font-extrabold text-sm font-mono disabled:opacity-50"
+                      />
+                      <span className="text-xs font-bold text-muted-foreground">%</span>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={hotelSettings.serviceChargeEnabled !== false}
+                      onClick={() =>
+                        handleToggleTax('serviceChargeEnabled', !(hotelSettings.serviceChargeEnabled !== false))
+                      }
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                        hotelSettings.serviceChargeEnabled !== false ? 'bg-emerald-600' : 'bg-muted-foreground/30'
+                      }`}
+                      title="Aktif / Nonaktifkan Service Charge"
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          hotelSettings.serviceChargeEnabled !== false ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
                   </div>
                 </div>
 
                 {/* Tax 2: PBJT Regional Hotel Tax */}
-                <div className="flex items-center justify-between p-4 bg-muted/20 border border-border rounded-xl">
+                <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 border rounded-xl transition-colors ${
+                  hotelSettings.pbjtEnabled !== false
+                    ? 'bg-muted/20 border-border'
+                    : 'bg-muted/10 border-border/60 opacity-75'
+                }`}>
                   <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-600 flex items-center justify-center font-bold text-xs">
+                    <div className="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-600 flex items-center justify-center font-bold text-xs flex-shrink-0">
                       #2
                     </div>
                     <div>
-                      <div className="font-bold text-sm text-foreground flex items-center gap-2">
-                        PBJT Jasa Perhotelan Kota Surakarta
+                      <div className="font-bold text-sm text-foreground flex items-center gap-2 flex-wrap">
+                        PBJT Jasa Perhotelan (Pajak Daerah)
                         <span className="text-[10px] px-1.5 py-0.2 rounded bg-muted text-muted-foreground font-mono">
-                          PBJT-HOTEL-SOLO
+                          PBJT-HOTEL
+                        </span>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                          hotelSettings.pbjtEnabled !== false
+                            ? 'bg-emerald-500/10 text-emerald-600'
+                            : 'bg-muted text-muted-foreground'
+                        }`}>
+                          {hotelSettings.pbjtEnabled !== false ? 'AKTIF' : 'NONAKTIF'}
                         </span>
                       </div>
                       <div className="text-xs text-muted-foreground mt-0.5">
-                        Regional Hotel Tax levied on (Base Rate + Service Charge). Compounding.
+                        Pajak Hotel (UU HKPD). {hotelSettings.pbjtEnabled !== false ? 'Dihitung & ditampilkan pada reservasi/nota.' : 'Tidak dihitung & tidak ditampilkan.'}
                       </div>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <span className="text-lg font-extrabold text-foreground">10.0%</span>
-                    <div className="text-[11px] text-emerald-600 font-semibold">Active • Regional</div>
+                  <div className="flex items-center gap-3 self-end sm:self-center">
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        step={0.5}
+                        disabled={hotelSettings.pbjtEnabled === false}
+                        value={hotelSettings.pbjtRate ?? 10}
+                        onChange={(e) =>
+                          setHotelSettings({
+                            ...hotelSettings,
+                            pbjtRate: Math.max(0, Math.min(100, Number(e.target.value) || 0)),
+                          })
+                        }
+                        className="w-16 px-2 py-1 text-right bg-background border border-border rounded-lg font-extrabold text-sm font-mono disabled:opacity-50"
+                      />
+                      <span className="text-xs font-bold text-muted-foreground">%</span>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={hotelSettings.pbjtEnabled !== false}
+                      onClick={() =>
+                        handleToggleTax('pbjtEnabled', !(hotelSettings.pbjtEnabled !== false))
+                      }
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                        hotelSettings.pbjtEnabled !== false ? 'bg-emerald-600' : 'bg-muted-foreground/30'
+                      }`}
+                      title="Aktif / Nonaktifkan PBJT"
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          hotelSettings.pbjtEnabled !== false ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
                   </div>
                 </div>
               </div>
@@ -705,21 +837,30 @@ export default function SettingsPage() {
                     <span className="text-muted-foreground">Base Room Rate:</span>
                     <span className="font-semibold text-foreground">{formatCurrency(calcBaseRate)}</span>
                   </div>
-                  <div className="flex items-center justify-between text-blue-600 dark:text-blue-400">
-                    <span>+ Service Charge (10%):</span>
-                    <span className="font-semibold">+{formatCurrency(serviceChargeAmount)}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-indigo-600 dark:text-indigo-400">
-                    <span>+ PBJT Surakarta (10% of Subtotal):</span>
-                    <span className="font-semibold">+{formatCurrency(pbjtAmount)}</span>
-                  </div>
+                  {taxPreview.serviceEnabled && (
+                    <div className="flex items-center justify-between text-blue-600 dark:text-blue-400">
+                      <span>+ Service Charge ({taxPreview.serviceRate}%):</span>
+                      <span className="font-semibold">+{formatCurrency(serviceChargeAmount)}</span>
+                    </div>
+                  )}
+                  {taxPreview.pbjtEnabled && (
+                    <div className="flex items-center justify-between text-indigo-600 dark:text-indigo-400">
+                      <span>+ PBJT Hotel ({taxPreview.pbjtRate}%):</span>
+                      <span className="font-semibold">+{formatCurrency(pbjtAmount)}</span>
+                    </div>
+                  )}
+                  {!taxPreview.serviceEnabled && !taxPreview.pbjtEnabled && (
+                    <div className="text-[11px] text-muted-foreground italic">
+                      Service Charge & PBJT sedang NONAKTIF (harga Nett).
+                    </div>
+                  )}
                   <div className="pt-2 border-t border-border flex items-center justify-between text-sm">
                     <span className="font-bold text-foreground">Gross Guest Total:</span>
                     <span className="font-extrabold text-foreground font-mono">{formatCurrency(totalGrossAmount)}</span>
                   </div>
                 </div>
                 <p className="text-[10px] text-muted-foreground italic">
-                  *Effective tax/fee addition: +21.0% ("plus-plus"), matching standard Indonesian hospitality.
+                  *Effective tax/fee addition: +{taxPreview.effectivePercent.toFixed(1)}%
                 </p>
               </div>
             </div>

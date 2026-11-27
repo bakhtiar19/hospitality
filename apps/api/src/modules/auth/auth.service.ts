@@ -72,6 +72,8 @@ export class AuthService {
             checkOutTime: '12:00 WIB',
             pbjtRate: 10,
             serviceChargeRate: 10,
+            pbjtEnabled: true,
+            serviceChargeEnabled: true,
           },
           isActive: autoActivate,
         },

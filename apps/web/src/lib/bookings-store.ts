@@ -30,13 +30,20 @@ export interface TapeChartBooking {
   ratePlan: string;
   checkInDate: string; // YYYY-MM-DD
   checkOutDate: string; // YYYY-MM-DD
-  status: 'CONFIRMED' | 'IN_HOUSE' | 'CHECKED_OUT';
+  isDayUse?: boolean;
+  status: 'CONFIRMED' | 'IN_HOUSE' | 'CHECKED_OUT' | 'CANCELLED';
   totalAmount: number;
   balance?: number;
   idNumber?: string;
   idType?: string;
   payments?: PaymentRecord[];
   notes?: string;
+  taxMeta?: {
+    pbjtEnabled?: boolean;
+    serviceChargeEnabled?: boolean;
+    pbjtRate?: number;
+    serviceChargeRate?: number;
+  };
 }
 
 export const initialBookings: TapeChartBooking[] = [
@@ -227,6 +234,26 @@ export function getStoredBookings(): TapeChartBooking[] {
   }
 }
 
+export function doStayRangesOverlap(
+  aIn: string,
+  aOut: string,
+  bIn: string,
+  bOut: string
+): boolean {
+  const aDayUse = aIn === aOut;
+  const bDayUse = bIn === bOut;
+  if (!aDayUse && !bDayUse) {
+    return aIn < bOut && aOut > bIn;
+  }
+  if (aDayUse && bDayUse) {
+    return aIn === bIn;
+  }
+  if (aDayUse && !bDayUse) {
+    return aIn >= bIn && aIn < bOut;
+  }
+  return bIn >= aIn && bIn < aOut;
+}
+
 export function calculateBookingBalance(booking: TapeChartBooking): number {
   if (!booking) return 0;
   const totalPaid = (booking.payments || []).reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
@@ -384,10 +411,16 @@ export async function apiRecordBookingPayment(
   return updated;
 }
 
-export async function apiDeletePmsBooking(bookingId: string): Promise<boolean> {
-  if (!getStoredSession()) return false;
-  await apiRequest(`/pms/bookings/${bookingId}`, { method: 'DELETE' });
+export async function apiCancelPmsBooking(
+  bookingId: string,
+  reason?: string
+): Promise<TapeChartBooking | null> {
+  if (!getStoredSession()) return null;
+  const updated = await apiRequest<TapeChartBooking>(`/pms/bookings/${bookingId}/cancel`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
   const current = getStoredBookings();
-  saveStoredBookings(current.filter((b) => b.id !== bookingId));
-  return true;
+  saveStoredBookings(current.map((b) => (b.id === bookingId ? updated : b)));
+  return updated;
 }

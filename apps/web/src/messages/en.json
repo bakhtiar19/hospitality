@@ -17,6 +17,7 @@
     "rates": "Rates & Inventory",
     "channels": "Channel Manager",
     "frontOffice": "Front Desk & Reservations",
+    "roomAvailability": "Room Availability",
     "housekeeping": "Housekeeping",
     "finance": "Finance & OTA Settlement",
     "bookingEngine": "Booking Engine",
